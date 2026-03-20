@@ -615,6 +615,9 @@ class State:
             if self._amxduet is None:
                 await _update_amxduet()
 
+            if not self._input_names:
+                await _update_input_names()
+
             await asyncio.gather(
                 *[
                     _update(CommandCodes.POWER),
@@ -637,7 +640,6 @@ class State:
                     _update(CommandCodes.LIPSYNC_DELAY),
                     _update(CommandCodes.SUBWOOFER_TRIM),
                     _update_presets(),
-                    _update_input_names(),
                 ]
             )
         else:
