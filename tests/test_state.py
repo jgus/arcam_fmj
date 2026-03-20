@@ -9,6 +9,7 @@ from arcam.fmj import (
     CommandCodes,
     IncomingAudioFormat,
     ResponsePacket,
+    SourceCodes,
     POWER_WRITE_SUPPORTED,
 )
 
@@ -239,3 +240,109 @@ def test_listen_amxduet():
     state._listen(amx)
     assert state.model == "AV860"
     assert state.revision == "1.2.3"
+
+
+# --- Input names ---
+
+
+def test_get_input_name_none():
+    """No input names cached returns None."""
+    client = MagicMock(spec=Client)
+    state = State(client, 1, ApiModel.API450_SERIES)
+    assert state.get_input_name(SourceCodes.CD) is None
+
+
+def test_get_input_names_empty():
+    client = MagicMock(spec=Client)
+    state = State(client, 1, ApiModel.API450_SERIES)
+    assert state.get_input_names() == {}
+
+
+def test_get_input_name_current_source():
+    """get_input_name() with no arg returns name for current source."""
+    client = MagicMock(spec=Client)
+    state = State(client, 1, ApiModel.API450_SERIES)
+    state._state[CommandCodes.CURRENT_SOURCE] = bytes([0x01])  # CD
+    state._input_names[SourceCodes.CD] = "My CD Player"
+    assert state.get_input_name() == "My CD Player"
+
+
+def test_get_input_name_specific_source():
+    client = MagicMock(spec=Client)
+    state = State(client, 1, ApiModel.API450_SERIES)
+    state._input_names[SourceCodes.BD] = "Blu-ray"
+    assert state.get_input_name(SourceCodes.BD) == "Blu-ray"
+
+
+def test_listen_input_name_update():
+    """INPUT_NAME status updates should be cached."""
+    client = MagicMock(spec=Client)
+    state = State(client, 1, ApiModel.API450_SERIES)
+    # Source byte 0x01 = CD in default mapping, followed by name
+    state._listen(
+        ResponsePacket(
+            1,
+            CommandCodes.INPUT_NAME,
+            AnswerCodes.STATUS_UPDATE,
+            bytes([0x01]) + b"My CD Player",
+        )
+    )
+    assert state.get_input_name(SourceCodes.CD) == "My CD Player"
+
+
+def test_listen_input_name_with_null_terminator():
+    """INPUT_NAME with null terminators should be stripped."""
+    client = MagicMock(spec=Client)
+    state = State(client, 1, ApiModel.API450_SERIES)
+    state._listen(
+        ResponsePacket(
+            1,
+            CommandCodes.INPUT_NAME,
+            AnswerCodes.STATUS_UPDATE,
+            bytes([0x02]) + b"Blu-ray\x00\x00",
+        )
+    )
+    assert state.get_input_name(SourceCodes.BD) == "Blu-ray"
+
+
+async def test_fetch_input_name():
+    """_fetch_input_name should send source byte and parse response."""
+    client = MagicMock(spec=Client)
+    state = State(client, 1, ApiModel.API450_SERIES)
+    client.request.return_value = bytes([0x01]) + b"My CD Player"
+    result = await state._fetch_input_name(SourceCodes.CD)
+    client.request.assert_called_with(
+        1, CommandCodes.INPUT_NAME, bytes([0x01])
+    )
+    assert result == "My CD Player"
+    assert state.get_input_name(SourceCodes.CD) == "My CD Player"
+
+
+async def test_set_input_name():
+    """set_input_name should send source byte + name."""
+    client = MagicMock(spec=Client)
+    state = State(client, 1, ApiModel.API450_SERIES)
+    await state.set_input_name(SourceCodes.CD, "Turntable")
+    client.request.assert_called_with(
+        1, CommandCodes.INPUT_NAME, bytes([0x01]) + b"Turntable"
+    )
+    assert state.get_input_name(SourceCodes.CD) == "Turntable"
+
+
+def test_input_names_in_to_dict():
+    """Input names should appear in to_dict output."""
+    client = MagicMock(spec=Client)
+    state = State(client, 1, ApiModel.API450_SERIES)
+    state._input_names[SourceCodes.CD] = "My CD"
+    result = state.to_dict()
+    assert result["INPUT_NAMES"] == {SourceCodes.CD: "My CD"}
+
+
+def test_input_names_returns_copy():
+    """get_input_names returns a copy, not the internal dict."""
+    client = MagicMock(spec=Client)
+    state = State(client, 1, ApiModel.API450_SERIES)
+    state._input_names[SourceCodes.CD] = "My CD"
+    names = state.get_input_names()
+    names[SourceCodes.BD] = "Should not appear"
+    assert SourceCodes.BD not in state._input_names

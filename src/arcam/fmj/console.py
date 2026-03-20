@@ -77,7 +77,13 @@ parser_state.add_argument(
 parser_state.add_argument(
     "--input-name",
     action="store_true",
-    help="Query the user-configured input name",
+    help="Show user-configured input names for all sources",
+)
+parser_state.add_argument(
+    "--set-input-name",
+    nargs=2,
+    metavar=("SOURCE", "NAME"),
+    help="Set user-configured input name for a source (e.g., --set-input-name CD 'My CD Player')",
 )
 
 parser_client = subparsers.add_parser("client")
@@ -131,6 +137,21 @@ async def run_state(args):
 
         if args.subwoofer_trim is not None:
             await state.set_subwoofer_trim(args.subwoofer_trim)
+
+        if args.set_input_name is not None:
+            source = SourceCodes[args.set_input_name[0]]
+            name = args.set_input_name[1]
+            await state.set_input_name(source, name)
+            print(f"Set input name for {source.name} to '{name}'")
+
+        if args.input_name:
+            input_names = state.get_input_names()
+            if input_names:
+                print("Input names:")
+                for source, name in input_names.items():
+                    print(f"  {source.name}: {name}")
+            else:
+                print("No input names configured")
 
         if args.monitor:
             async with state:
@@ -250,6 +271,11 @@ async def run_server(args):
             self.register_handler(
                 0x01, CommandCodes.TUNER_PRESET, None, self.set_tuner_preset
             )
+            self.register_handler(
+                0x01, CommandCodes.INPUT_NAME, None, self.handle_input_name
+            )
+
+            self._input_names: dict[bytes, bytes] = {}
 
         def get_power(self, **kwargs):
             return bytes([1])
@@ -347,6 +373,20 @@ async def run_server(args):
         def set_tuner_preset(self, data, **kwargs):
             self._tuner_preset = data
             return self._tuner_preset
+
+        def handle_input_name(self, data, **kwargs):
+            source_byte = data[0:1]
+            if len(data) > 1:
+                # Set input name
+                self._input_names[source_byte] = data
+                return data
+            else:
+                # Get input name
+                name = self._input_names.get(source_byte)
+                if name:
+                    return name
+                # Return default name based on source byte
+                return source_byte + b"Input " + str(source_byte[0]).encode()
 
         def get_preset_detail(self, data, **kwargs):
             preset = self._presets.get(data)

@@ -73,6 +73,7 @@ def _set_scaled(value: float, min_value: float, max_value: float, scale: float) 
 class State:
     _state: dict[int, bytes | None]
     _presets: dict[int, PresetDetail]
+    _input_names: dict[SourceCodes, str]
 
     def __init__(
         self, client: Client, zn: int, api_model: ApiModel = ApiModel.API450_SERIES
@@ -81,6 +82,7 @@ class State:
         self._client = client
         self._state = dict()
         self._presets = dict()
+        self._input_names = dict()
         self._amxduet: AmxDuetResponse | None = None
         self._api_model = api_model
 
@@ -121,6 +123,7 @@ class State:
             "RDS_INFORMATION": self.get_rds_information(),
             "TUNER_PRESET": self.get_tuner_preset(),
             "PRESET_DETAIL": self.get_preset_details(),
+            "INPUT_NAMES": self.get_input_names(),
         }
 
     def __repr__(self) -> str:
@@ -138,6 +141,21 @@ class State:
 
         if packet.ac == AnswerCodes.STATUS_UPDATE:
             self._state[packet.cc] = packet.data
+            if packet.cc == CommandCodes.INPUT_NAME and len(packet.data) > 1:
+                try:
+                    source = SourceCodes.from_bytes(
+                        packet.data[0:1], self._api_model, self._zn
+                    )
+                    name = (
+                        packet.data[1:]
+                        .decode("utf-8", errors="replace")
+                        .rstrip("\x00")
+                        .strip()
+                    )
+                    if name:
+                        self._input_names[source] = name
+                except ValueError:
+                    pass
         else:
             self._state[packet.cc] = None
 
@@ -411,16 +429,47 @@ class State:
     def get_source_list(self) -> list[SourceCodes]:
         return list(RC5CODE_SOURCE[(self._api_model, self._zn)].keys())
 
-    async def get_input_name(self) -> str | None:
-        """Query the user-configured input name for the current source."""
-        try:
-            data = await self._client.request(
-                self._zn, CommandCodes.INPUT_NAME, bytes([0xF0])
-            )
-            return data.decode('utf-8', errors='replace').rstrip('\x00').strip()
-        except Exception as e:
-            _LOGGER.warning("Failed to get input name: %s", e)
+    def get_input_name(self, source: SourceCodes | None = None) -> str | None:
+        """Get the cached user-configured input name for a source.
+
+        If source is None, returns the name for the current source.
+        """
+        if source is None:
+            source = self.get_source()
+        if source is None:
             return None
+        return self._input_names.get(source)
+
+    def get_input_names(self) -> dict[SourceCodes, str]:
+        """Return all cached user-configured input names."""
+        return dict(self._input_names)
+
+    async def _fetch_input_name(self, source: SourceCodes) -> str | None:
+        """Fetch the user-configured input name for a specific source from the device."""
+        try:
+            source_byte = source.to_bytes(self._api_model, self._zn)
+            data = await self._client.request(
+                self._zn, CommandCodes.INPUT_NAME, source_byte
+            )
+            # Response format: [source_byte][name_string...]
+            if len(data) > 1:
+                name = data[1:].decode("utf-8", errors="replace").rstrip("\x00").strip()
+                if name:
+                    self._input_names[source] = name
+                    return name
+            return None
+        except (ResponseException, NotConnectedException, TimeoutError) as e:
+            _LOGGER.debug("Failed to get input name for %s: %s", source, e)
+            return None
+
+    async def set_input_name(self, source: SourceCodes, name: str) -> None:
+        """Set the user-configured input name for a source."""
+        source_byte = source.to_bytes(self._api_model, self._zn)
+        name_bytes = name.encode("utf-8")
+        await self._client.request(
+            self._zn, CommandCodes.INPUT_NAME, source_byte + name_bytes
+        )
+        self._input_names[source] = name
 
     async def set_source(self, src: SourceCodes) -> None:
         if self._api_model in SOURCE_WRITE_SUPPORTED:
@@ -505,6 +554,11 @@ class State:
             except TimeoutError:
                 _LOGGER.error("Timeout requesting %s", cc)
 
+        async def _update_input_names() -> None:
+            source_list = self.get_source_list()
+            for source in source_list:
+                await self._fetch_input_name(source)
+
         async def _update_presets() -> None:
             presets = {}
             for preset in range(1, 51):
@@ -583,8 +637,10 @@ class State:
                     _update(CommandCodes.LIPSYNC_DELAY),
                     _update(CommandCodes.SUBWOOFER_TRIM),
                     _update_presets(),
+                    _update_input_names(),
                 ]
             )
         else:
             if self._state:
                 self._state = dict()
+                self._input_names = dict()
