@@ -48,7 +48,10 @@ class ResponsePacket:
     def response_to(self, request: Union["AmxDuetRequest", "CommandPacket"]):
         if not isinstance(request, CommandPacket):
             return False
-        return self.zn == request.zn and self.cc == request.cc
+        if self.cc != request.cc:
+            return False
+        # System-wide CCs (INPUT_CONFIG and friends) broadcast write echoes with zn=0; treat that as matching a zn=1 request.
+        return self.zn == request.zn or (self.zn == 0 and request.zn == 1)
 
     @staticmethod
     def from_bytes(data: bytes) -> "ResponsePacket":

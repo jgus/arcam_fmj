@@ -265,6 +265,24 @@ def test_listen_ignores_other_zone():
     assert state.get_volume() is None
 
 
+def test_listen_zn0_treated_as_zn1():
+    """System-wide CCs (e.g. INPUT_CONFIG write echoes) arrive with zn=0; a
+    zone-1 State should accept them as if they were addressed to zone 1."""
+    client = MagicMock(spec=Client)
+    state = State(client, 1)
+    state._listen(ResponsePacket(0, CommandCodes.VOLUME, AnswerCodes.STATUS_UPDATE, bytes([42])))
+    assert state.get_volume() == 42
+
+
+def test_listen_zone2_ignores_zn0():
+    """Zone-2 State should drop zn=0 broadcasts — the data is anchored to
+    zone 1 and would publish wrong values for zone 2."""
+    client = MagicMock(spec=Client)
+    state = State(client, 2)
+    state._listen(ResponsePacket(0, CommandCodes.VOLUME, AnswerCodes.STATUS_UPDATE, bytes([42])))
+    assert state.get_volume() is None
+
+
 def test_listen_clears_on_error():
     client = MagicMock(spec=Client)
     state = State(client, 1)

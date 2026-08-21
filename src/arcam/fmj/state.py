@@ -329,7 +329,8 @@ class State:
             self._amxduet = packet
             return
 
-        if packet.zn != self._zn:
+        # System-wide CCs (0x28-0x2F) respond with zn=0; treat zn=0 as zn=1.
+        if (packet.zn or 1) != self._zn:
             return
 
         if packet.ac == AnswerCodes.STATUS_UPDATE:

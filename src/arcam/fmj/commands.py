@@ -213,10 +213,10 @@ class CommandCodes(IntOrTypeEnum):
     ROOM_EQ_NAMES                   = 0x34, _ROOM_NAM,  _U
 
     # --- Setup / EQ ---
-    TREBLE_EQUALIZATION             = 0x35, _AVR,       _Z | _U,          None,    ScaledSigned(-12.0, 12.0, 1.0, inc_dec=IncDecRc5(rc5_table=RC5CODE_TREBLE))
-    BASS_EQUALIZATION               = 0x36, _AVR,       _Z | _U,          None,    ScaledSigned(-12.0, 12.0, 1.0, inc_dec=IncDecRc5(rc5_table=RC5CODE_BASS))
+    TREBLE_EQUALIZATION             = 0x35, _AVR,       _Z | _U,          None,    ScaledSigned(-12.0, 12.0, 1.0, inc_dec=IncDecRc5(rc5_table=RC5CODE_TREBLE))  # AV41 zone 2 query returns zone 1 info
+    BASS_EQUALIZATION               = 0x36, _AVR,       _Z | _U,          None,    ScaledSigned(-12.0, 12.0, 1.0, inc_dec=IncDecRc5(rc5_table=RC5CODE_BASS))  # AV41 zone 2 query returns zone 1 info
     ROOM_EQUALIZATION               = 0x37, _ROOM_EQ,   _Z | _U,          None,    ByteEnum(RoomEqMode)
-    DOLBY_AUDIO                     = 0x38, _AVR,       _Z | _U,          None,    ByteEnum(DolbyAudioMode)  # was "Dolby Volume" in 450/860 (SH256E/SH274E)
+    DOLBY_AUDIO                     = 0x38, _AVR,       _Z | _U,          None,    ByteEnum(DolbyAudioMode)  # was "Dolby Volume" in 450/860 (SH256E/SH274E); AV41 zone 2 query returns zone 1 info
     DOLBY_LEVELER                   = 0x39, _AVR,       _Z | _U,          None,    IntByte()  # per probe: AV41 still responds despite spec removal at SH289E issue C.0; 0xFF = off
     DOLBY_VOLUME_CALIBRATION_OFFSET = 0x3A, _AVR,       _Z | _U,          None,    ScaledSigned(-15.0, 15.0, 1.0)  # per probe: AV41 still responds despite spec removal at SH289E issue C.0
     BALANCE                         = 0x3B, _AVR_SA,    _Z | _U,          None,    ScaledSigned(-6.0, 6.0, 1.0, inc_dec=IncDecRc5(rc5_table=RC5CODE_BALANCE))
@@ -224,7 +224,7 @@ class CommandCodes(IntOrTypeEnum):
     DOLBY_PLIIX_CENTRE_WIDTH        = 0x3D, _450,       _U,               None,    IntByte(inc_dec=IncDecRc5(rc5_table=RC5CODE_DOLBY_PLIIX_CENTRE_WIDTH))
     DOLBY_PLIIX_PANORAMA            = 0x3E, _450,       _U,               None,    Rc5Fallback(inner=BoolByte(), rc5_table=RC5CODE_DOLBY_PLIIX_PANORAMA)
     SUBWOOFER_TRIM                  = 0x3F, _AVR,       _Z | _U,          None,    ScaledSigned(-10.0, 10.0, 0.5, inc_dec=IncDecRc5(rc5_table=RC5CODE_SUB_TRIM))
-    LIPSYNC_DELAY                   = 0x40, _AVR,       _Z | _U,          None,    ScaledSigned(0.0, 250.0, 5.0, inc_dec=IncDecRc5(rc5_table=RC5CODE_LIPSYNC))
+    LIPSYNC_DELAY                   = 0x40, _AVR,       _Z | _U,          None,    ScaledSigned(0.0, 250.0, 5.0, inc_dec=IncDecRc5(rc5_table=RC5CODE_LIPSYNC))  # AV41 zone 2 query returns zone 1 info
     COMPRESSION                     = 0x41, _AVR,       _Z | _U,          None,    ByteEnum(CompressionMode)
 
     # --- Incoming Signal / Video ---

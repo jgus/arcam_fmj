@@ -80,6 +80,43 @@ async def test_writer_valid():
     )
 
 
+# --- response_to zone matching ---
+
+
+def test_response_to_matches_same_zone():
+    req = CommandPacket(1, CommandCodes.VOLUME, b"\xF0")
+    resp = ResponsePacket(1, CommandCodes.VOLUME, AnswerCodes.STATUS_UPDATE, b"\x2A")
+    assert resp.response_to(req)
+
+
+def test_response_to_rejects_other_zone():
+    req = CommandPacket(1, CommandCodes.VOLUME, b"\xF0")
+    resp = ResponsePacket(2, CommandCodes.VOLUME, AnswerCodes.STATUS_UPDATE, b"\x2A")
+    assert not resp.response_to(req)
+
+
+def test_response_to_zn0_matches_zn1_request():
+    """System-wide CCs (e.g. INPUT_CONFIG write echoes) broadcast as zn=0; a
+    zone-1 client should accept them as the response to its request."""
+    req = CommandPacket(1, CommandCodes.INPUT_CONFIG, b"\xF0" * 25)
+    resp = ResponsePacket(0, CommandCodes.INPUT_CONFIG, AnswerCodes.STATUS_UPDATE, b"\xF0" * 25)
+    assert resp.response_to(req)
+
+
+def test_response_to_zn0_does_not_match_zn2_request():
+    """A zone-2 request should not be satisfied by a zn=0 broadcast — the
+    broadcast is anchored to zone 1's state, not zone 2's."""
+    req = CommandPacket(2, CommandCodes.INPUT_CONFIG, b"\xF0")
+    resp = ResponsePacket(0, CommandCodes.INPUT_CONFIG, AnswerCodes.STATUS_UPDATE, b"\xF0")
+    assert not resp.response_to(req)
+
+
+def test_response_to_rejects_different_cc():
+    req = CommandPacket(1, CommandCodes.VOLUME, b"\xF0")
+    resp = ResponsePacket(1, CommandCodes.POWER, AnswerCodes.STATUS_UPDATE, b"\x01")
+    assert not resp.response_to(req)
+
+
 async def test_intenum():
     class TestClass1(IntOrTypeEnum):
         TEST = 55
