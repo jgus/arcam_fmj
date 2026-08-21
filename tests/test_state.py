@@ -1167,12 +1167,12 @@ async def test_setter_raises_for_runtime_blocked_command():
 
 async def test_update_skips_unsupported_commands():
     """update() should not request commands that are not supported by the device."""
-    from arcam.fmj.errors import CommandInvalidAtThisTime
+    from arcam.fmj.errors import InvalidDataLength
 
     client = MagicMock(spec=Client)
     client.connected = True
     # Make all requests raise so we purely test which commands are attempted
-    client.request.side_effect = CommandInvalidAtThisTime()
+    client.request.side_effect = InvalidDataLength()
     state = State(client, 1)
     state._amxduet = AmxDuetResponse({"Device-Model": "SA30"})
 
@@ -1189,11 +1189,11 @@ async def test_update_skips_unsupported_commands():
 async def test_update_substitutes_input_config_for_bundled_commands():
     """On models that support INPUT_CONFIG, one bundle request replaces the
     per-CC requests for every command the bundle carries."""
-    from arcam.fmj.errors import CommandInvalidAtThisTime
+    from arcam.fmj.errors import InvalidDataLength
 
     client = MagicMock(spec=Client)
     client.connected = True
-    client.request.side_effect = CommandInvalidAtThisTime()
+    client.request.side_effect = InvalidDataLength()
     state = State(client, 1)
     state._amxduet = AmxDuetResponse({"Device-Model": "AVR20"})
 
@@ -1207,11 +1207,11 @@ async def test_update_substitutes_input_config_for_bundled_commands():
 
 async def test_update_no_input_config_substitution_when_unsupported():
     """When INPUT_CONFIG isn't supported, bundled commands fall back to individual queries."""
-    from arcam.fmj.errors import CommandInvalidAtThisTime
+    from arcam.fmj.errors import InvalidDataLength
 
     client = MagicMock(spec=Client)
     client.connected = True
-    client.request.side_effect = CommandInvalidAtThisTime()
+    client.request.side_effect = InvalidDataLength()
     state = State(client, 1)
     state._amxduet = AmxDuetResponse({"Device-Model": "AVR20"})
     # Force INPUT_CONFIG to look unsupported on this device.
@@ -1224,6 +1224,78 @@ async def test_update_no_input_config_substitution_when_unsupported():
     # At least one bundle-covered command was queried individually (the fallback path).
     bundle_requested = [cc for cc in requested if cc in INPUT_CONFIG_FIELDS]
     assert bundle_requested, "Expected bundle-covered commands to be queried individually when bundle unsupported"
+
+
+async def test_should_update_matrix():
+    """The refresh matrix: _U fires on initial only; _D|_NP every cycle;
+    _U|_NP (in INPUT_CONFIG_FIELDS) on initial + source change."""
+    from arcam.fmj.commands import CommandFlags
+    client = MagicMock(spec=Client)
+    client.connected = True
+    state = State(client, 1)
+    state._amxduet = AmxDuetResponse({"Device-Model": "AVR20"})
+
+    # Pick representatives
+    plain_u = CommandCodes.POWER                   # _Z | _U
+    dynamic_np = CommandCodes.NOW_PLAYING_INFO     # _Z | _D | _NP
+    source_refresh = CommandCodes.INPUT_NAME       # _RO | _U | _NP, in INPUT_CONFIG_FIELDS
+
+    # Sanity check the flag combos in the catalogue
+    assert source_refresh.flags & CommandFlags.NOT_PUSHED
+    assert not (source_refresh.flags & CommandFlags.DYNAMIC)
+    assert source_refresh in INPUT_CONFIG_FIELDS
+    assert dynamic_np.flags & CommandFlags.DYNAMIC
+    assert dynamic_np.flags & CommandFlags.NOT_PUSHED
+
+    # Initial pass: everything with UPDATE fires
+    assert state._should_update(plain_u)
+    assert state._should_update(dynamic_np)
+    assert state._should_update(source_refresh)
+
+    # Mark initial pass complete with a known source — NET so NOW_PLAYING_INFO
+    # is source-applicable.
+    src_a = SourceCodes.NET.to_bytes(state._api_model, state._zn)
+    src_b = SourceCodes.BT.to_bytes(state._api_model, state._zn)
+    state._state[CommandCodes.CURRENT_SOURCE] = src_a
+    state._updated.set()
+    state._queried_source = src_a
+    assert not state._should_update(plain_u), "_U: no re-fetch after initial"
+    assert state._should_update(dynamic_np), "_D|_NP: poll every cycle"
+    assert not state._should_update(source_refresh), "_U|_NP: not until source change"
+
+    # Source changes: cache reflects new source, _queried_source still old.
+    state._state[CommandCodes.CURRENT_SOURCE] = src_b
+    assert not state._should_update(plain_u), "_U: still no re-fetch"
+    assert state._should_update(source_refresh), "_U|_NP: refreshed on source change"
+
+
+async def test_source_change_triggers_input_config_refresh():
+    """A source change should cause exactly one INPUT_CONFIG fetch on the next
+    update pass (substitution path picks up INPUT_NAME, which is in the bundle)."""
+    from arcam.fmj.errors import InvalidDataLength
+    client = MagicMock(spec=Client)
+    client.connected = True
+    client.request.side_effect = InvalidDataLength()
+    state = State(client, 1)
+    state._amxduet = AmxDuetResponse({"Device-Model": "AVR20"})
+
+    # Pretend initial pass has happened; per-source cache is fresh for source 0x10
+    state._updated.set()
+    state._state[CommandCodes.CURRENT_SOURCE] = bytes([0x10])
+    state._queried_source = bytes([0x10])
+
+    # Source switches to a different value
+    state._listen(ResponsePacket(
+        1, CommandCodes.CURRENT_SOURCE, AnswerCodes.STATUS_UPDATE, bytes([0x04])
+    ))
+    assert state._queried_source != state._state[CommandCodes.CURRENT_SOURCE]
+
+    # Now the next update pass should refresh — exactly one INPUT_CONFIG fetch
+    await asyncio.gather(*await state.get_update_tasks())
+    requested = [call.args[1] for call in client.request.call_args_list]
+    assert requested.count(CommandCodes.INPUT_CONFIG) == 1
+    # INPUT_NAME should NOT have been individually fetched (substitution took over)
+    assert CommandCodes.INPUT_NAME not in requested
 
 
 async def test_update_records_command_not_recognised():

@@ -15,6 +15,7 @@ from .codecs import AnswerCodes
 from .commands import CommandCodes, CommandFlags
 from .errors import (
     ArcamException,
+    CommandInvalidAtThisTime,
     ConnectionFailed,
     NotConnectedException,
     ResponseException,
@@ -230,7 +231,10 @@ class ClientBase:
             if not tasks:
                 await asyncio.sleep(_UPDATE_IDLE_INTERVAL.total_seconds())
                 continue
-            await run_tasks(*tasks)
+            try:
+                await run_tasks(*tasks)
+            except CommandInvalidAtThisTime:
+                _LOGGER.debug("Transient update error; will retry")
 
     async def _process_heartbeat(self):
         while True:

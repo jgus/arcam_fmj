@@ -265,6 +265,7 @@ class State:
         self._amxduet: AmxDuetResponse | None = None
         self._unsupported_commands: set[CommandCodes] = set()
         self._updated = asyncio.Event()
+        self._queried_source: bytes | None = None
 
     async def start(self) -> None:
         """Register the status-update listener and update provider."""
@@ -374,19 +375,34 @@ class State:
         return src is None or src in cc.sources
 
     def _should_update(self, cc: CommandCodes) -> bool:
-        """Whether the update loop should fetch this command right now."""
+        """Whether the update loop should fetch this command right now.
+
+        Refresh matrix:
+          _U or _D: initial pass only; relies on device pushes.
+          _U | _NP and in INPUT_CONFIG_FIELDS: initial pass + on source change
+          _D | _NP: polled every cycle (e.g. NOW_PLAYING_INFO).
+        """
         if not self.is_command_supported(cc):
             return False
         if not (cc.flags & CommandFlags.ZONE_SUPPORT) and self._zn != 1:
             return False
         if not (cc.flags & CommandFlags.UPDATE):
             return False
-        # Pushed commands are fetched only during the initial pass.
-        if not (cc.flags & CommandFlags.NOT_PUSHED) and self._updated.is_set():
-            return False
         if not self._is_command_supported_on_source(cc):
             return False
-        return True
+        # Initial pass after (re)connection - query everything we don't know yet
+        if not self._updated.is_set():
+            return True
+        # Don't poll anything that gets pushed automatically
+        if not (cc.flags & CommandFlags.NOT_PUSHED):
+            return False
+        # If it's not pushed, but it's dynamic, poll for it
+        if cc.flags & CommandFlags.DYNAMIC:
+            return True
+        # Not pushed, not dynamic, but is source-specific? Recheck after source change
+        if cc in INPUT_CONFIG_FIELDS and self._queried_source != self._state.get(CommandCodes.CURRENT_SOURCE):
+            return True
+        return False
 
     def _require_command(self, cc: CommandCodes) -> None:
         """Raise UnsupportedCommand if the command is not supported."""
@@ -450,11 +466,14 @@ class State:
                 _LOGGER.debug("Unsupported zone %s for %s", self._zn, cc)
             except CommandNotRecognised:
                 self._state[cc] = None
-            except ResponseException as e:
+            except CommandInvalidAtThisTime as e:
+                # INPUT_CONFIG's CIATT is transient; _process_updates retries
+                if cc == CommandCodes.INPUT_CONFIG:
+                    raise
                 _LOGGER.debug("Response error skipping %s - %s", cc, e.ac)
                 self._state[cc] = None
-            except NotConnectedException as e:
-                _LOGGER.debug("Not connected skipping %s", cc)
+            except ResponseException as e:
+                _LOGGER.debug("Response error skipping %s - %s", cc, e.ac)
                 self._state[cc] = None
             except TimeoutError:
                 _LOGGER.error("Timeout requesting %s", cc)
@@ -469,16 +488,17 @@ class State:
                     if data != b"\x00":
                         presets[preset] = PresetDetail.from_bytes(data)
                 except CommandInvalidAtThisTime:
+                    # End of preset range — not an error, just stop.
                     break
                 except CommandNotRecognised:
                     _LOGGER.debug("Presets not supported skipping %s", preset)
                     break
-                except NotConnectedException as e:
-                    _LOGGER.debug("Not connected skipping preset %s", preset)
-                    return
+                except ResponseException as e:
+                    _LOGGER.debug("Preset error %s; stopping", e.ac)
+                    break
                 except TimeoutError:
                     _LOGGER.error("Timeout requesting preset %s", preset)
-                    return
+                    break
             self._presets = presets
 
         async def _update_now_playing() -> None:
@@ -497,10 +517,6 @@ class State:
                     return
                 except ParameterNotRecognised:
                     _LOGGER.debug("Now playing %s not supported", field.name)
-                except NotConnectedException:
-                    _LOGGER.debug("Not connected skipping now playing")
-                    self._now_playing = None
-                    return
                 except ResponseException as e:
                     _LOGGER.debug("Now playing %s error: %s", field.name, e.ac)
                 except TimeoutError:
@@ -527,6 +543,7 @@ class State:
                 self._state = dict()
                 self._now_playing = None
             self._updated.clear()
+            self._queried_source = None
             return []
 
         if self._amxduet is None:
@@ -550,20 +567,21 @@ class State:
         if need_input_config:
             tasks.append(_update(CommandCodes.INPUT_CONFIG))
 
-        if not self._updated.is_set():
-            if not tasks:
-                self._updated.set()
-                return []
+        current_source = self._state.get(CommandCodes.CURRENT_SOURCE)
+        if self._updated.is_set() and self._queried_source == current_source:
+            return tasks
 
-            async def _run_and_signal():
-                try:
-                    await run_tasks(*tasks)
-                finally:
-                    self._updated.set()
+        if not tasks:
+            self._updated.set()
+            self._queried_source = current_source
+            return []
 
-            return [_run_and_signal()]
+        async def _run_and_signal():
+            await run_tasks(*tasks)
+            self._updated.set()
+            self._queried_source = current_source
 
-        return tasks
+        return [_run_and_signal()]
 
     async def update(self) -> None:
         """Block until the provider-driven update loop completes one pass."""

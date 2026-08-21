@@ -41,8 +41,11 @@ class CommandFlags(enum.IntFlag):
     ZONE_SUPPORT = enum.auto()
     READ_ONLY = enum.auto()     # Request (read) works; Set (write) is unsupported or unsafe.
     WRITE_ONLY = enum.auto()    # Set (write) works; no Request (read) form defined.
-    UPDATE = enum.auto()        # Fetched by the State update loop.
-    NOT_PUSHED = enum.auto()    # Device does not send unsolicited updates
+    UPDATE = enum.auto()        # Fetched by the State update loop on the initial pass.
+    DYNAMIC = enum.auto()       # Value changes frequently during normal use.
+    NOT_PUSHED = enum.auto()    # Device does not send unsolicited updates.
+
+    # Notes on UPDATE, DYNAMIC, and NOT_PUSHED: Both UPDATE and DYNAMIC mean "we want to know this value" aka "we should ask for this when doing an update." If the the device automatically pushes updates, then the two are functionally identical. If it does _not_, ie for things tagged NOT_PUSHED, the difference is whether we need to poll: DYNAMIC + NOT_PUSHED: We want to know this thing, it changes, and the device doesn't tell us when it - so we poll it constantly (when on the appropriate source.) UPDATE + NOT_PUSHED: Similar, but it _doesn't_ change frequently enough to warrant polling. We only read these on start-up, and consider that good enough. In the case of source-specific settings, we re-check these on source change as well.
 
 #: Models that accept a direct CC write for power on/off.
 POWER_WRITE_SUPPORTED = {
@@ -78,6 +81,7 @@ _RO = CommandFlags.READ_ONLY
 _WO = CommandFlags.WRITE_ONLY
 _U = CommandFlags.UPDATE
 _NP = CommandFlags.NOT_PUSHED
+_D = CommandFlags.DYNAMIC | CommandFlags.UPDATE  # DYNAMIC means UPDATE too
 
 _AVR = APIVERSION_AVR_SERIES
 _AVR_SA = APIVERSION_AVR_AND_SA_SERIES
@@ -156,16 +160,16 @@ class CommandCodes(IntOrTypeEnum):
     # ----                            --    -------     -----             -------  ------
 
     # --- System ---
-    POWER                           = 0x00, None,       _Z | _U,          None,    BoolByte()
+    POWER                           = 0x00, None,       _Z | _D,          None,    BoolByte()
     DISPLAY_BRIGHTNESS              = 0x01, _AVR_SA_ST, _U,               None,    Rc5Fallback(inner=ByteEnum(DisplayBrightness), rc5_table=RC5CODE_DISPLAY_BRIGHTNESS, direct_set_supported=frozenset(DISPLAY_BRIGHTNESS_WRITE_SUPPORTED))
-    HEADPHONES                      = 0x02, _AVR_SA,    _RO | _U,         None,    BoolByte()
-    FM_GENRE                        = 0x03, _AVR,       _Z | _RO | _U,    _FM,     AsciiString()
+    HEADPHONES                      = 0x02, _AVR_SA,    _RO | _D,         None,    BoolByte()
+    FM_GENRE                        = 0x03, _AVR,       _Z | _RO | _D,    _FM,     AsciiString()
     SOFTWARE_VERSION                = 0x04, None,       _RO | _U
     RESTORE_FACTORY_DEFAULT         = 0x05, None,       _WO
     SAVE_RESTORE_COPY_OF_SETTINGS   = 0x06, _AVR,       _WO
     SIMULATE_RC5_IR_COMMAND         = 0x08, _AVR_SA_ST, _Z | _WO
-    DISPLAY_INFO_TYPE               = 0x09, _AVR,       _Z | _RO | _U,    _FM,     IntByte()  # per probe — AV41 only responds in FM source
-    CURRENT_SOURCE                  = 0x1D, _AVR_SA_ST, _Z | _RO | _U
+    DISPLAY_INFO_TYPE               = 0x09, _AVR,       _Z | _RO | _D,    _FM,     IntByte()  # per probe — AV41 only responds in FM source
+    CURRENT_SOURCE                  = 0x1D, _AVR_SA_ST, _Z | _RO | _D
     HEADPHONES_OVERRIDE             = 0x1F, _AVR_SA,    _Z | _WO,         None,    BoolByte()
 
     # --- Input ---
@@ -174,28 +178,28 @@ class CommandCodes(IntOrTypeEnum):
     IMAX_ENHANCED                   = 0x0C, _IMAX,      _U,               None,    ByteEnum(ImaxEnhancedMode, set_map=IMAX_ENHANCED_SET_MAP)  # was "Video input type" in 450 (SH256E); not AVR5 (SH289E)
 
     # --- Output ---
-    VOLUME                          = 0x0D, _AVR_SA_ST, _Z | _U,          None,    IntByte(inc_dec=IncDecRc5(rc5_table=RC5CODE_VOLUME, step_via_cc_supported=frozenset(VOLUME_STEP_SUPPORTED)))
-    MUTE                            = 0x0E, None,       _Z | _RO | _U,    None,    Rc5Fallback(inner=BoolByte(inverted=True), rc5_table=RC5CODE_MUTE, direct_set_supported=frozenset(MUTE_WRITE_SUPPORTED))
-    DIRECT_MODE                     = 0x0F, _DIRECT,    _RO | _U,         None,    Rc5Fallback(inner=BoolByte(), rc5_table=RC5CODE_DIRECT_MODE)
-    DECODE_MODE_2CH                 = 0x10, _AVR,       _RO | _U,         None,    Rc5Fallback(inner=ByteEnum(DecodeMode2CH), rc5_table=RC5CODE_DECODE_MODE_2CH)
-    DECODE_MODE_MCH                 = 0x11, _AVR,       _RO | _U,         None,    Rc5Fallback(inner=ByteEnum(DecodeModeMCH), rc5_table=RC5CODE_DECODE_MODE_MCH)
-    RDS_INFORMATION                 = 0x12, _AVR,       _Z | _RO | _U,    _FM,     AsciiString()
+    VOLUME                          = 0x0D, _AVR_SA_ST, _Z | _D,          None,    IntByte(inc_dec=IncDecRc5(rc5_table=RC5CODE_VOLUME, step_via_cc_supported=frozenset(VOLUME_STEP_SUPPORTED)))
+    MUTE                            = 0x0E, None,       _Z | _RO | _D,    None,    Rc5Fallback(inner=BoolByte(inverted=True), rc5_table=RC5CODE_MUTE, direct_set_supported=frozenset(MUTE_WRITE_SUPPORTED))
+    DIRECT_MODE                     = 0x0F, _DIRECT,    _RO | _D,         None,    Rc5Fallback(inner=BoolByte(), rc5_table=RC5CODE_DIRECT_MODE)
+    DECODE_MODE_2CH                 = 0x10, _AVR,       _RO | _D,         None,    Rc5Fallback(inner=ByteEnum(DecodeMode2CH), rc5_table=RC5CODE_DECODE_MODE_2CH)
+    DECODE_MODE_MCH                 = 0x11, _AVR,       _RO | _D,         None,    Rc5Fallback(inner=ByteEnum(DecodeModeMCH), rc5_table=RC5CODE_DECODE_MODE_MCH)
+    RDS_INFORMATION                 = 0x12, _AVR,       _Z | _RO | _D,    _FM,     AsciiString()
     VIDEO_OUTPUT_RESOLUTION         = 0x13, _AVR,       _RO
 
     # --- Menu / Tuner / Source ---
     MENU                            = 0x14, _AVR,       _RO | _U,         None,    ByteEnum(MenuCodes)
     TUNER_PRESET                    = 0x15, _AVR,       _Z | _U,          _FM
     TUNE                            = 0x16, _AVR,       _Z
-    DAB_STATION                     = 0x18, _AVR,       _Z | _RO | _U,    _DAB,    AsciiString()
-    DAB_PROGRAM_TYPE_CATEGORY       = 0x19, _AVR,       _Z | _RO | _U,    _DAB
-    DLS_PDT                         = 0x1A, _AVR,       _Z | _RO | _U,    _DAB,    AsciiString()
+    DAB_STATION                     = 0x18, _AVR,       _Z | _RO | _D,    _DAB,    AsciiString()
+    DAB_PROGRAM_TYPE_CATEGORY       = 0x19, _AVR,       _Z | _RO | _D,    _DAB
+    DLS_PDT                         = 0x1A, _AVR,       _Z | _RO | _D,    _DAB,    AsciiString()
     PRESET_DETAIL                   = 0x1B, _AVR,       _Z | _RO | _U,    _TUN  # request data is the preset number to query
-    NETWORK_PLAYBACK_STATUS         = 0x1C, _NET_PLAY,  _RO | _U | _NP,   _NET,    StructFromBytes(NetworkPlaybackStatus)
+    NETWORK_PLAYBACK_STATUS         = 0x1C, _NET_PLAY,  _RO | _D | _NP,   _NET,    StructFromBytes(NetworkPlaybackStatus)
 
     # --- Extended (2.0) ---
-    INPUT_NAME                      = 0x20, _AVR,       _RO | _U,         None,    AsciiString()
+    INPUT_NAME                      = 0x20, _AVR,       _RO | _U | _NP,   None,    AsciiString()  # not DYNAMIC: refreshed on source change via INPUT_CONFIG_FIELDS membership, not every cycle
     FM_SCAN                         = 0x23, _AVR,       _WO,              _FM
-    DAB_SCAN                        = 0x24, _AVR,       _WO | _U,         _DAB
+    DAB_SCAN                        = 0x24, _AVR,       _WO,              _DAB
     HEARTBEAT                       = 0x25, None,       _RO
     REBOOT                          = 0x26, None
     SETUP                           = 0x27, _HDA
@@ -228,9 +232,9 @@ class CommandCodes(IntOrTypeEnum):
     COMPRESSION                     = 0x41, _AVR,       _Z | _U,          None,    ByteEnum(CompressionMode)
 
     # --- Incoming Signal / Video ---
-    INCOMING_VIDEO_PARAMETERS       = 0x42, _AVR,       _RO | _U,         None,    StructFromBytes(VideoParameters)
-    INCOMING_AUDIO_FORMAT           = 0x43, _AVR,       _RO | _U
-    INCOMING_AUDIO_SAMPLE_RATE      = 0x44, _AVR_SA_ST, _RO | _U
+    INCOMING_VIDEO_PARAMETERS       = 0x42, _AVR,       _RO | _D,         None,    StructFromBytes(VideoParameters)
+    INCOMING_AUDIO_FORMAT           = 0x43, _AVR,       _RO | _D
+    INCOMING_AUDIO_SAMPLE_RATE      = 0x44, _AVR_SA_ST, _RO | _D
     SUB_STEREO_TRIM                 = 0x45, _AVR,       _U,               None,    ScaledSigned(-10.0, 0.0, 0.5)
     VIDEO_BRIGHTNESS                = 0x46, _450,       _U,               None,    ScaledSigned(-50.0, 50.0, 1.0)
     VIDEO_CONTRAST                  = 0x47, _450,       _U,               None,    ScaledSigned(-50.0, 50.0, 1.0)
@@ -241,28 +245,28 @@ class CommandCodes(IntOrTypeEnum):
     VIDEO_MPEG_NOISE_REDUCTION      = 0x4D, _450,       _U,               None,    ByteEnum(VideoNoiseReduction)
     ZONE_1_OSD_ON_OFF               = 0x4E, _AVR,       _U,               None,    ByteEnum(ZoneOsd, set_map=ZONE_OSD_SET_MAP)
     VIDEO_OUTPUT_SWITCHING          = 0x4F, _AVR,       _U,               None,    ByteEnum(HdmiOutput)
-    BLUETOOTH_STATUS                = 0x50, _HDA,       _RO | _U | _NP,   _BT  # was "Output Frame Rate" in 450 (SH256E)
+    BLUETOOTH_STATUS                = 0x50, _HDA,       _RO | _D | _NP,   _BT  # was "Output Frame Rate" in 450 (SH256E)
 
     # --- Diagnostics / Amp Control ---
-    DC_OFFSET                       = 0x51, _THERM,     _RO | _U | _NP,   None,    BoolByte()  # True = DC offset detected
-    SHORT_CIRCUIT_STATUS            = 0x52, _CLASS_G,   _RO | _U | _NP,   None,    BoolByte()  # True = short circuit fault
+    DC_OFFSET                       = 0x51, _THERM,     _RO | _D | _NP,   None,    BoolByte()  # True = DC offset detected
+    SHORT_CIRCUIT_STATUS            = 0x52, _CLASS_G,   _RO | _D | _NP,   None,    BoolByte()  # True = short circuit fault
     TIMEOUT_COUNTER                 = 0x55, _AMP_DIAG,  _RO
     # bug in PA720 1.8 firmware — does not return sensor id
-    LIFTER_TEMPERATURE              = 0x56, _CLASS_G,   _RO | _U | _NP,   None,    IntByte()
-    OUTPUT_TEMPERATURE              = 0x57, _THERM,     _RO | _U | _NP,   None,    IntByte()
+    LIFTER_TEMPERATURE              = 0x56, _CLASS_G,   _RO | _D | _NP,   None,    IntByte()
+    OUTPUT_TEMPERATURE              = 0x57, _THERM,     _RO | _D | _NP,   None,    IntByte()
     AUTO_SHUTDOWN_CONTROL           = 0x58, _AMP_DIAG,  _U,               None,    ByteEnum(AutoShutdown)
 
     # --- Status / Diagnostics ---
     FRIENDLY_NAME                   = 0x53, _SIMPLE_IP, _U,               None,    AsciiString()
     IP_ADDRESS                      = 0x54, _SIMPLE_IP  # 4-byte IP
     PHONO_INPUT_TYPE                = 0x59, _PHONO
-    INPUT_DETECT                    = 0x5A, _AMP_DIAG,  _RO | _U,         None,    BoolByte()
-    PROCESSOR_MODE_INPUT            = 0x5B, _SA,        _U,               None,    SaProcessorModeInput()
-    PROCESSOR_MODE_VOLUME           = 0x5C, _SA,        _U,               None,    IntByte()  # 0–99; ST60 reuses 0x5C for Fixed Volume
+    INPUT_DETECT                    = 0x5A, _AMP_DIAG,  _RO | _D,         None,    BoolByte()
+    PROCESSOR_MODE_INPUT            = 0x5B, _SA,        _D,               None,    SaProcessorModeInput()
+    PROCESSOR_MODE_VOLUME           = 0x5C, _SA,        _D,               None,    IntByte()  # 0–99; ST60 reuses 0x5C for Fixed Volume
     SYSTEM_STATUS                   = 0x5D, _AMP_DIAG,  _RO  # 0xF0 triggers bulk status dump
     SYSTEM_MODEL                    = 0x5E, _AMP_DIAG,  _RO | _U,         None,    AsciiString()
     DAC_FILTER                      = 0x61, _DAC_FILT,  _U,               None,    ByteEnum(DacFilter)  # clashes with AMPLIFIER_MODE on PA240
-    NOW_PLAYING_INFO                = 0x64, _NOW_PLAY,  _Z | _U | _NP,    _NET
+    NOW_PLAYING_INFO                = 0x64, _NOW_PLAY,  _Z | _D | _NP,    _NET
     MAX_TURN_ON_VOLUME              = 0x65, _APP_SAFE,  _U,               None,    IntByte()
     MAX_VOLUME                      = 0x66, _APP_SAFE,  _U,               None,    IntByte()
     MAX_STREAMING_VOLUME            = 0x67, _APP_SAFE,  _U,               None,    IntByte()
