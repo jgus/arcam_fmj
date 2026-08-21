@@ -414,6 +414,95 @@ SOURCE_CODES: dict[tuple[ApiModel, int], dict[SourceCodes, bytes]] = {
     (ApiModel.APIST_SERIES, 1): ST_SOURCE_MAPPING,
 }
 
+# --- CC 0x28: INPUT_CONFIG (sub-fields exposed via synthetic 0x28XX CCs) ---
+
+class DecodeMode2CHPerSource(IntOrTypeEnum):
+    """User's per-input 2-channel decode-mode preference.
+
+    Carried in the INPUT_CONFIG (0x28) bundle at offset 11; exposed via the
+    synthetic DECODE_MODE_2CH_PER_SOURCE CC. Note: this is the *configured
+    preference* for the current input (LAST_MODE = inherit from prior source);
+    for the actively-decoding mode use DECODE_MODE_2CH (0x10).
+
+    See: SH289E "Input config (0x28)".
+    """
+
+    LAST_MODE = 0x00
+    STEREO = 0x01
+    STEREO_DIRECT = 0x02
+    DOLBY_SURROUND = 0x03
+    DTS_NEURAL_X = 0x04
+    VIRTUAL_HEIGHT = 0x05
+    SIXTEEN_CH_STEREO = 0x06
+    AURO_2D_SURROUND = 0x07
+    # 0x08 - Reserved
+    AURO_3D = 0x09
+    AURO_NATIVE = 0x0A
+
+class DecodeModeMCHPerSource(IntOrTypeEnum):
+    """User's per-input multi-channel decode-mode preference.
+
+    Carried in the INPUT_CONFIG (0x28) bundle at offset 12; exposed via the
+    synthetic DECODE_MODE_MCH_PER_SOURCE CC. Note: this is the *configured
+    preference* for the current input; for the actively-decoding mode use
+    DECODE_MODE_MCH (0x11).
+
+    See: SH289E "Input config (0x28)".
+    """
+
+    LAST_MODE = 0x00
+    NATIVE = 0x01
+    STEREO_DOWNMIX = 0x02
+    VIRTUAL_HEIGHT = 0x03
+    NATIVE_UPMIXER = 0x04
+    # 0x05 - Reserved
+    AURO_2D_SURROUND = 0x06
+    AURO_3D = 0x07
+    AURO_NATIVE = 0x08
+
+class InputTrim(IntOrTypeEnum):
+    """Analog input gain trim.
+
+    Carried in the INPUT_CONFIG (0x28) bundle at offset 16; exposed via the
+    synthetic INPUT_TRIM CC. No individual wire CC.
+
+    See: SH289E "Input config (0x28)".
+    """
+
+    V1 = 0x00
+    V2 = 0x01
+    V4 = 0x02
+
+class StereoMode(IntOrTypeEnum):
+    """Stereo speaker routing.
+
+    Carried in the INPUT_CONFIG (0x28) bundle at offset 18; exposed via the
+    synthetic STEREO_MODE CC. No individual wire CC (PROCESSOR_MODE_INPUT
+    is the SA-series analogue but uses a different encoding).
+
+    See: SH289E "Input config (0x28)".
+    """
+
+    LEFT_RIGHT = 0x00
+    LEFT_RIGHT_SUB = 0x01
+    SUB_SAT = 0x02
+    AS_SPEAKER_TYPES = 0x03
+
+class AuroMatic3DPreset(IntOrTypeEnum):
+    """Auro-Matic 3D upmixer preset.
+
+    Carried in the INPUT_CONFIG (0x28) bundle at offset 21; exposed via the
+    synthetic AURO_MATIC_3D CC. No individual wire CC.
+
+    See: SH289E "Input config (0x28)".
+    """
+
+    SMALL = 0x00
+    MEDIUM = 0x01
+    LARGE = 0x02
+    MOVIE = 0x03
+    SPEECH = 0x04
+
 # --- CC 0x37: ROOM_EQUALIZATION ---
 
 class RoomEqMode(IntOrTypeEnum):

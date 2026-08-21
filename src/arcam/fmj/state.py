@@ -8,12 +8,15 @@ import attr
 
 from .codecs import (
     AnswerCodes,
+    AuroMatic3DPreset,
     AutoShutdown,
     BluetoothAudioStatus,
     CompressionMode,
     DacFilter,
     DecodeMode2CH,
+    DecodeMode2CHPerSource,
     DecodeModeMCH,
+    DecodeModeMCHPerSource,
     DisplayBrightness,
     DolbyAudioMode,
     HdmiOutput,
@@ -21,6 +24,7 @@ from .codecs import (
     ImaxEnhancedMode,
     IncomingAudioConfig,
     IncomingAudioFormat,
+    InputTrim,
     MenuCodes,
     NetworkPlaybackStatus,
     NowPlayingInfo,
@@ -30,6 +34,7 @@ from .codecs import (
     SAVE_RESTORE_CONFIRMATION,
     SaveRestoreSubCommand,
     SourceCodes,
+    StereoMode,
     VideoFilmMode,
     VideoNoiseReduction,
     VideoParameters,
@@ -347,7 +352,13 @@ class State:
             self._state[cc] = transform(field_bytes) if transform is not None else field_bytes
 
     def is_command_supported(self, cc: CommandCodes) -> bool:
-        """Check if a command is supported by the current device."""
+        """Check if a command can be sent over the wire to the current device."""
+        # Synthetic CCs (high byte = parent bundle's CC) are populated by
+        # the bundle decoder, never sent individually. Reject early so they
+        # stay out of the update loop and any direct _request call surfaces
+        # UnsupportedCommand instead of a serialization error.
+        if cc > 0xff:
+            return False
         if cc in self._unsupported_commands:
             return False
         if cc.version is not None and self.model is not None:

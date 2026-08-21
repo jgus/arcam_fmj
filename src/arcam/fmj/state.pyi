@@ -11,24 +11,29 @@ with the same async/sync kind and the same signature.
 from typing import Any
 
 from .codecs import (
+    AuroMatic3DPreset,
     AutoShutdown,
     BluetoothAudioStatus,
     CompressionMode,
     DacFilter,
     DecodeMode2CH,
+    DecodeMode2CHPerSource,
     DecodeModeMCH,
+    DecodeModeMCHPerSource,
     DisplayBrightness,
     DolbyAudioMode,
     HdmiOutput,
     ImaxEnhancedMode,
     IncomingAudioConfig,
     IncomingAudioFormat,
+    InputTrim,
     MenuCodes,
     NetworkPlaybackStatus,
     NowPlayingInfo,
     PresetDetail,
     RoomEqMode,
     SourceCodes,
+    StereoMode,
     VideoFilmMode,
     VideoNoiseReduction,
     VideoParameters,
@@ -311,3 +316,18 @@ class State:
     # MAX_STREAMING_VOLUME (0x67)
     def get_max_streaming_volume(self) -> int | None: ...
     async def set_max_streaming_volume(self, value: int) -> None: ...
+    # --- INPUT_CONFIG (0x28) bundle-only fields (synthetic CCs) ---
+    # DECODE_MODE_2CH_PER_SOURCE (0x280B)
+    def get_decode_mode_2ch_per_source(self) -> DecodeMode2CHPerSource | None: ...
+    # DECODE_MODE_MCH_PER_SOURCE (0x280C)
+    def get_decode_mode_mch_per_source(self) -> DecodeModeMCHPerSource | None: ...
+    # INPUT_TRIM (0x2810)
+    def get_input_trim(self) -> InputTrim | None: ...
+    # STEREO_MODE (0x2812)
+    def get_stereo_mode(self) -> StereoMode | None: ...
+    # AURO_MATIC_3D (0x2815)
+    def get_auro_matic_3d(self) -> AuroMatic3DPreset | None: ...
+    # AURO_MATIC_STRENGTH (0x2816)
+    def get_auro_matic_strength(self) -> int | None: ...
+    # CD_DIRECT (0x2818)
+    def get_cd_direct(self) -> bool | None: ...

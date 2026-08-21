@@ -273,33 +273,48 @@ class CommandCodes(IntOrTypeEnum):
     SERIAL_NUMBER                   = 0xF1, _HDA,       _RO  # 16-byte ASCII device serial
     MAC_ADDRESS                     = 0xF2, _HDA,       _RO  # 6-byte MAC address
     UNKNOWN_F3                      = 0xF3, _HDA,       _RO  # Returns single byte 0x01
+
+    # --- Bundle-only fields ---
+    # Synthetic CCs (out of byte range; can't be sent on the wire) for fields
+    # carried only in the INPUT_CONFIG (0x28) bundle. Value layout: 0x28 (parent
+    # bundle CC) in the high byte, byte offset within the bundle in the low byte.
+    # READ_ONLY because writing them would require a partial INPUT_CONFIG write
+    # we don't support yet. is_command_supported() rejects any CC > 0xff so the
+    # central wire-send guard catches misuse.
+    DECODE_MODE_2CH_PER_SOURCE      = 0x280B, _HDA,      _RO,              None,    ByteEnum(DecodeMode2CHPerSource)
+    DECODE_MODE_MCH_PER_SOURCE      = 0x280C, _HDA,      _RO,              None,    ByteEnum(DecodeModeMCHPerSource)
+    INPUT_TRIM                      = 0x2810, _HDA,      _RO,              None,    ByteEnum(InputTrim)
+    STEREO_MODE                     = 0x2812, _HDA,      _RO,              None,    ByteEnum(StereoMode)
+    AURO_MATIC_3D                   = 0x2815, _HDA,      _RO,              None,    ByteEnum(AuroMatic3DPreset)
+    AURO_MATIC_STRENGTH             = 0x2816, _HDA,      _RO,              None,    IntByte()  # 0-16
+    CD_DIRECT                       = 0x2818, _HDA,      _RO,              None,    BoolByte()
     # fmt: on
 
 
 #: Per-field layout of the INPUT_CONFIG (0x28) response, ordered by slice to
-#: mirror the on-the-wire byte layout. Keyed by the individual CC each bundle
-#: field carries data for; the value is a ``(slice, decoder)`` pair where
-#: decoder produces the bytes a fresh query of that CC would have returned,
-#: or ``None`` to pass the slice through unchanged. Bundle offsets without a
-#: usable individual-CC mapping are noted inline.
+#: mirror the on-the-wire byte layout. Keyed by the CC each bundle field
+#: maps to — either an existing individual-CC or a synthetic 0x28XX bundle-
+#: only CC. The value is a ``(slice, decoder)`` pair where decoder produces
+#: the bytes a fresh query of that CC would have returned, or ``None`` to
+#: pass the slice through unchanged.
 #: See: SH289E "Input config (0x28)".
 # fmt: off
 INPUT_CONFIG_FIELDS: dict[CommandCodes, tuple[slice, Callable[[bytes], bytes] | None]] = {
-    CommandCodes.INPUT_NAME:            (slice( 0, 10), None),
-    CommandCodes.LIPSYNC_DELAY:         (slice(10, 11), None),
-    # offset 11: 2ch "Mode" — configured preference (e.g. "Last mode"), not the actively-decoding mode that DECODE_MODE_2CH returns; different field that happens to share a name
-    # offset 12: "MCH mode" — same story; different field from DECODE_MODE_MCH
-    CommandCodes.BASS_EQUALIZATION:     (slice(13, 14), None),
-    CommandCodes.TREBLE_EQUALIZATION:   (slice(14, 15), None),
-    CommandCodes.ROOM_EQUALIZATION:     (slice(15, 16), None),
-    # offset 16: Input Trim — bundle-only (no individual CC)
-    CommandCodes.DOLBY_AUDIO:           (slice(17, 18), None),
-    # offset 18: Stereo mode — bundle-only on HDA (PROCESSOR_MODE_INPUT is the SA analogue, different encoding)
-    CommandCodes.SUB_STEREO_TRIM:       (slice(19, 20), None),
-    CommandCodes.IMAX_ENHANCED:         (slice(20, 21), lambda b: bytes([IMAX_ENHANCED_BUNDLE_DECODE_MAP.get(b[0], b[0])])),
-    # offset 21: Auro-Matic 3D — bundle-only
-    # offset 22: Auro-Matic Strength — bundle-only
-    CommandCodes.SELECT_ANALOG_DIGITAL: (slice(23, 24), None),
-    # offset 24: CD Direct — bundle-only
+    CommandCodes.INPUT_NAME:                 (slice( 0, 10), None),
+    CommandCodes.LIPSYNC_DELAY:              (slice(10, 11), None),
+    CommandCodes.DECODE_MODE_2CH_PER_SOURCE: (slice(11, 12), None),
+    CommandCodes.DECODE_MODE_MCH_PER_SOURCE: (slice(12, 13), None),
+    CommandCodes.BASS_EQUALIZATION:          (slice(13, 14), None),
+    CommandCodes.TREBLE_EQUALIZATION:        (slice(14, 15), None),
+    CommandCodes.ROOM_EQUALIZATION:          (slice(15, 16), None),
+    CommandCodes.INPUT_TRIM:                 (slice(16, 17), None),
+    CommandCodes.DOLBY_AUDIO:                (slice(17, 18), None),
+    CommandCodes.STEREO_MODE:                (slice(18, 19), None),
+    CommandCodes.SUB_STEREO_TRIM:            (slice(19, 20), None),
+    CommandCodes.IMAX_ENHANCED:              (slice(20, 21), lambda b: bytes([IMAX_ENHANCED_BUNDLE_DECODE_MAP.get(b[0], b[0])])),
+    CommandCodes.AURO_MATIC_3D:              (slice(21, 22), None),
+    CommandCodes.AURO_MATIC_STRENGTH:        (slice(22, 23), None),
+    CommandCodes.SELECT_ANALOG_DIGITAL:      (slice(23, 24), None),
+    CommandCodes.CD_DIRECT:                  (slice(24, 25), None),
 }
 # fmt: on
