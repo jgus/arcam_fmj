@@ -1,7 +1,9 @@
 import argparse
 import asyncio
+import json
 import logging
 import sys
+import time
 from pprint import pprint
 
 from .codecs import (
@@ -20,12 +22,12 @@ from .codecs import (
     VideoParameters,
 )
 from .commands import CommandCodes, CommandFlags
-from .errors import CommandInvalidAtThisTime, CommandNotRecognised
+from .errors import CommandInvalidAtThisTime, CommandNotRecognised, ConnectionFailed
 from .models import (
     APIVERSION_AVR_SERIES,
     api_model_for,
 )
-from .packets import ResponsePacket
+from .packets import AmxDuetResponse, ResponsePacket, read_response
 from .rc5 import RC5CODE_SOURCE
 from .schemas import (
     AsciiString,
@@ -163,6 +165,21 @@ parser_server = subparsers.add_parser("server")
 parser_server.add_argument("--host", default="localhost")
 parser_server.add_argument("--port", default=50000)
 parser_server.add_argument("--model", default="AVR450")
+
+parser_sniff = subparsers.add_parser(
+    "sniff",
+    help="Connect to a device and dump every received packet as JSONL.",
+    description=(
+        "Passive packet sniffer. Opens a TCP connection to the device, reads framed packets, and writes one JSON object per line. Does not use Client or State — no heartbeats, no auto-queries, no zone filtering. Useful for capturing wire traffic for offline analysis."
+    ),
+)
+parser_sniff.add_argument("--host", required=True)
+parser_sniff.add_argument("--port", default=50000, type=int)
+parser_sniff.add_argument(
+    "--output",
+    default="-",
+    help="Output file path, or '-' for stdout (default).",
+)
 
 
 async def run_client(args):
@@ -383,6 +400,54 @@ async def run_server(args):
             await asyncio.sleep(delay=1)
 
 
+def _packet_to_entry(packet) -> dict:
+    """Render a single received packet as a JSON-serializable dict."""
+    entry: dict = {"ts": time.time()}
+    if isinstance(packet, ResponsePacket):
+        entry["type"] = "response"
+        entry["raw"] = packet.to_bytes().hex()
+        entry["zn"] = packet.zn
+        entry["cc"] = int(packet.cc)
+        entry["cc_name"] = getattr(packet.cc, "name", None) or f"CODE_{int(packet.cc)}"
+        entry["ac"] = int(packet.ac)
+        entry["ac_name"] = getattr(packet.ac, "name", None) or f"AC_{int(packet.ac)}"
+        entry["data"] = packet.data.hex()
+    elif isinstance(packet, AmxDuetResponse):
+        entry["type"] = "amx"
+        entry["raw"] = packet.to_bytes().hex()
+        entry["values"] = dict(packet.values)
+    else:
+        entry["type"] = type(packet).__name__
+        entry["repr"] = repr(packet)
+    return entry
+
+
+async def run_sniff(args):
+    """Open a raw connection, read framed packets, emit JSONL — no Client/State."""
+    out = sys.stdout if args.output == "-" else open(args.output, "a", buffering=1)
+    try:
+        reader, writer = await asyncio.open_connection(args.host, args.port)
+        try:
+            while True:
+                try:
+                    packet = await read_response(reader)
+                except ConnectionFailed:
+                    break
+                if packet is None:
+                    break
+                out.write(json.dumps(_packet_to_entry(packet)) + "\n")
+                out.flush()
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except OSError:
+                pass
+    finally:
+        if out is not sys.stdout:
+            out.close()
+
+
 def main_real():
     args = parser.parse_args()
 
@@ -404,6 +469,8 @@ def main_real():
         asyncio.run(run_state(args))
     elif args.subcommand == "server":
         asyncio.run(run_server(args))
+    elif args.subcommand == "sniff":
+        asyncio.run(run_sniff(args))
 
 def main():
     try:
