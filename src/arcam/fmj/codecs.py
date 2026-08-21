@@ -113,6 +113,16 @@ IMAX_ENHANCED_SET_MAP: dict[ImaxEnhancedMode, int] = {
     ImaxEnhancedMode.OFF: 0xF3,
 }
 
+#: Maps a bundle byte (INPUT_CONFIG offset 20) to ImaxEnhancedMode. The bundle
+#: encodes 0x00/0x01/0x02 = Auto/On/Off — opposite the individual read CC,
+#: which uses 0x00/0x01/0x02 = Off/On/Auto.
+#: See: SH289E "Input config (0x28)".
+IMAX_ENHANCED_BUNDLE_DECODE_MAP: dict[int, ImaxEnhancedMode] = {
+    0x00: ImaxEnhancedMode.AUTO,
+    0x01: ImaxEnhancedMode.ON,
+    0x02: ImaxEnhancedMode.OFF,
+}
+
 # --- CC 0x10: DECODE_MODE_STATUS_2CH ---
 
 class DecodeMode2CH(IntOrTypeEnum):

@@ -16,6 +16,7 @@ a new command:
 from __future__ import annotations
 
 import enum
+from collections.abc import Callable
 
 from .codecs import *  # noqa: F401,F403
 from .models import *  # noqa: F401,F403
@@ -27,6 +28,7 @@ __all__ = [
     "CommandCodes",
     "CommandFlags",
     "DISPLAY_BRIGHTNESS_WRITE_SUPPORTED",
+    "INPUT_CONFIG_FIELDS",
     "MUTE_WRITE_SUPPORTED",
     "POWER_WRITE_SUPPORTED",
     "SOURCE_WRITE_SUPPORTED",
@@ -191,7 +193,7 @@ class CommandCodes(IntOrTypeEnum):
     NETWORK_PLAYBACK_STATUS         = 0x1C, _NET_PLAY,  _RO | _U | _NP,   _NET,    StructFromBytes(NetworkPlaybackStatus)
 
     # --- Extended (2.0) ---
-    INPUT_NAME                      = 0x20, _AVR,       _RO
+    INPUT_NAME                      = 0x20, _AVR,       _RO | _U,         None,    AsciiString()
     FM_SCAN                         = 0x23, _AVR,       _WO,              _FM
     DAB_SCAN                        = 0x24, _AVR,       _WO | _U,         _DAB
     HEARTBEAT                       = 0x25, None,       _RO
@@ -272,3 +274,32 @@ class CommandCodes(IntOrTypeEnum):
     MAC_ADDRESS                     = 0xF2, _HDA,       _RO  # 6-byte MAC address
     UNKNOWN_F3                      = 0xF3, _HDA,       _RO  # Returns single byte 0x01
     # fmt: on
+
+
+#: Per-field layout of the INPUT_CONFIG (0x28) response, ordered by slice to
+#: mirror the on-the-wire byte layout. Keyed by the individual CC each bundle
+#: field carries data for; the value is a ``(slice, decoder)`` pair where
+#: decoder produces the bytes a fresh query of that CC would have returned,
+#: or ``None`` to pass the slice through unchanged. Bundle offsets without a
+#: usable individual-CC mapping are noted inline.
+#: See: SH289E "Input config (0x28)".
+# fmt: off
+INPUT_CONFIG_FIELDS: dict[CommandCodes, tuple[slice, Callable[[bytes], bytes] | None]] = {
+    CommandCodes.INPUT_NAME:            (slice( 0, 10), None),
+    CommandCodes.LIPSYNC_DELAY:         (slice(10, 11), None),
+    # offset 11: 2ch "Mode" — configured preference (e.g. "Last mode"), not the actively-decoding mode that DECODE_MODE_2CH returns; different field that happens to share a name
+    # offset 12: "MCH mode" — same story; different field from DECODE_MODE_MCH
+    CommandCodes.BASS_EQUALIZATION:     (slice(13, 14), None),
+    CommandCodes.TREBLE_EQUALIZATION:   (slice(14, 15), None),
+    CommandCodes.ROOM_EQUALIZATION:     (slice(15, 16), None),
+    # offset 16: Input Trim — bundle-only (no individual CC)
+    CommandCodes.DOLBY_AUDIO:           (slice(17, 18), None),
+    # offset 18: Stereo mode — bundle-only on HDA (PROCESSOR_MODE_INPUT is the SA analogue, different encoding)
+    CommandCodes.SUB_STEREO_TRIM:       (slice(19, 20), None),
+    CommandCodes.IMAX_ENHANCED:         (slice(20, 21), lambda b: bytes([IMAX_ENHANCED_BUNDLE_DECODE_MAP.get(b[0], b[0])])),
+    # offset 21: Auro-Matic 3D — bundle-only
+    # offset 22: Auro-Matic Strength — bundle-only
+    CommandCodes.SELECT_ANALOG_DIGITAL: (slice(23, 24), None),
+    # offset 24: CD Direct — bundle-only
+}
+# fmt: on

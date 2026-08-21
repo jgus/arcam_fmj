@@ -39,6 +39,7 @@ from .codecs import (
 from .commands import (
     CommandCodes,
     CommandFlags,
+    INPUT_CONFIG_FIELDS,
     MUTE_WRITE_SUPPORTED,
     POWER_WRITE_SUPPORTED,
     SOURCE_WRITE_SUPPORTED,
@@ -328,12 +329,22 @@ class State:
 
         if packet.ac == AnswerCodes.STATUS_UPDATE:
             self._state[packet.cc] = packet.data
+            if packet.cc == CommandCodes.INPUT_CONFIG:
+                self._unpack_input_config(packet.data)
         else:
             self._state[packet.cc] = None
 
     @property
     def _api_model(self) -> ApiModel:
         return api_model_for(self.model)
+
+    def _unpack_input_config(self, data: bytes) -> None:
+        """Fan an INPUT_CONFIG (0x28) response out into the per-field state entries."""
+        for cc, (field_slice, transform) in INPUT_CONFIG_FIELDS.items():
+            if field_slice.stop > len(data):
+                continue
+            field_bytes = data[field_slice]
+            self._state[cc] = transform(field_bytes) if transform is not None else field_bytes
 
     def is_command_supported(self, cc: CommandCodes) -> bool:
         """Check if a command is supported by the current device."""
@@ -510,6 +521,8 @@ class State:
             await _update_amxduet()
 
         tasks: list[UpdateTask] = []
+        input_config_supported = self.is_command_supported(CommandCodes.INPUT_CONFIG)
+        need_input_config = False
         for cc in CommandCodes:
             if not self._should_update(cc):
                 continue
@@ -517,8 +530,13 @@ class State:
                 tasks.append(_update_now_playing())
             elif cc == CommandCodes.PRESET_DETAIL:
                 tasks.append(_update_presets())
+            elif input_config_supported and cc in INPUT_CONFIG_FIELDS:
+                # Substituted by one INPUT_CONFIG query below.
+                need_input_config = True
             else:
                 tasks.append(_update(cc))
+        if need_input_config:
+            tasks.append(_update(CommandCodes.INPUT_CONFIG))
 
         if not self._updated.is_set():
             if not tasks:
@@ -721,14 +739,6 @@ class State:
             await self._request(self._zn, CommandCodes.CURRENT_SOURCE, value)
         else:
             await self._send_rc5(RC5CODE_SOURCE, src)
-
-    # INPUT_NAME (0x20)
-    async def get_input_name(self) -> str | None:
-        """Fetch the name of the currently selected input (uncached)."""
-        if not self._is_command_supported_on_source(CommandCodes.INPUT_NAME):
-            return None
-        data = await self._request(self._zn, CommandCodes.INPUT_NAME, bytes([0xF0]))
-        return data.decode("utf-8", errors="replace").rstrip("\x00").strip()
 
     # FM_SCAN (0x23)
     async def fm_scan(self, up: bool = True) -> None:

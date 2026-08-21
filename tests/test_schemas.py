@@ -146,7 +146,6 @@ _KNOWN_MANUAL: set[CommandCodes] = {
     CommandCodes.TUNE,                     # 2-byte freq + inc/dec
     CommandCodes.DAB_PROGRAM_TYPE_CATEGORY,
     CommandCodes.PRESET_DETAIL,            # composite buffered in self._presets
-    CommandCodes.INPUT_NAME,               # get_input_name(slot) — uncached, parameterized
     CommandCodes.NETWORK_MENU_INFO,
     CommandCodes.BLUETOOTH_MENU_INFO,
     CommandCodes.ENGINEERING_MENU_INFO,

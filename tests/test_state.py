@@ -21,7 +21,7 @@ from arcam.fmj.codecs import (
     SourceCodes,
     VideoSelection,
 )
-from arcam.fmj.commands import CommandCodes, CommandFlags, POWER_WRITE_SUPPORTED
+from arcam.fmj.commands import CommandCodes, CommandFlags, INPUT_CONFIG_FIELDS, POWER_WRITE_SUPPORTED
 from arcam.fmj.errors import UnsupportedCommand
 from arcam.fmj.models import ApiModel
 from arcam.fmj.packets import AmxDuetResponse, ResponsePacket
@@ -292,6 +292,94 @@ def test_amxduet_resolves_api_model_for_every_zone():
     z2._listen(amx)
     assert z1.model == z2.model == "AV41"
     assert z1._api_model == z2._api_model == ApiModel.APIHDA_SERIES
+
+
+# --- INPUT_CONFIG (0x28) bundle unpacking ---
+
+
+_INPUT_CONFIG_RESPONSE = bytes([
+    # bytes 0-9: name "HDMI Cable"
+    0x48, 0x44, 0x4D, 0x49, 0x20, 0x43, 0x61, 0x62, 0x6C, 0x65,
+    0x05,  # 10: lip sync
+    0x00,  # 11: 2ch mode ("Last mode") — should NOT be cached
+    0x00,  # 12: MCH mode ("Last mode") — should NOT be cached
+    0x03,  # 13: bass +3
+    0x82,  # 14: treble -2
+    0x01,  # 15: room EQ slot 1
+    0x01,  # 16: input trim (no individual CC)
+    0x02,  # 17: dolby audio = music
+    0x03,  # 18: stereo mode (no individual CC)
+    0x84,  # 19: sub stereo -2.0
+    0x00,  # 20: IMAX = Auto (bundle encoding) — should map to AUTO (0x02) on the CC
+    0x01,  # 21: auro-matic 3D
+    0x0C,  # 22: auro-matic strength
+    0x02,  # 23: audio source = HDMI
+    0x01,  # 24: CD direct on
+])
+
+
+def test_listen_input_config_unpacks_fields():
+    """INPUT_CONFIG response fans out into per-field state entries."""
+    client = MagicMock(spec=Client)
+    state = State(client, 1)
+    state._listen(ResponsePacket(
+        1, CommandCodes.INPUT_CONFIG, AnswerCodes.STATUS_UPDATE, _INPUT_CONFIG_RESPONSE,
+    ))
+
+    # INPUT_NAME currently has a manual async getter that doesn't consult the
+    # cache; check the raw cache entry instead. The auto-gen getters for the
+    # rest decode out of the cache directly, so we can call them.
+    assert state._state[CommandCodes.INPUT_NAME] == b"HDMI Cable"
+    assert state.get_lipsync_delay() == 25.0  # 0x05 × 5ms step
+    assert state.get_bass_equalization() == 3.0
+    assert state.get_treble_equalization() == -2.0
+    assert state.get_room_equalization() == RoomEqMode.EQ1
+    assert state.get_dolby_audio() == DolbyAudioMode.MUSIC
+    assert state.get_sub_stereo_trim() == -2.0
+    assert state.get_imax_enhanced() == ImaxEnhancedMode.AUTO
+
+
+def test_listen_input_config_skips_decode_mode():
+    """Bundle's "Mode"/"MCH mode" bytes describe the configured preference,
+    not the actively-decoding mode; they must not be written into the
+    DECODE_MODE_2CH/MCH cache slots."""
+    client = MagicMock(spec=Client)
+    state = State(client, 1)
+    state._listen(ResponsePacket(
+        1, CommandCodes.INPUT_CONFIG, AnswerCodes.STATUS_UPDATE, _INPUT_CONFIG_RESPONSE,
+    ))
+    assert CommandCodes.DECODE_MODE_2CH not in state._state
+    assert CommandCodes.DECODE_MODE_MCH not in state._state
+
+
+def test_listen_input_config_imax_encoding_inverted():
+    """Bundle encodes IMAX as Auto/On/Off=0/1/2; individual CC uses Off/On/Auto=0/1/2."""
+    client = MagicMock(spec=Client)
+    state = State(client, 1)
+    base = bytearray(_INPUT_CONFIG_RESPONSE)
+    for bundle_byte, expected_mode in [
+        (0x00, ImaxEnhancedMode.AUTO),
+        (0x01, ImaxEnhancedMode.ON),
+        (0x02, ImaxEnhancedMode.OFF),
+    ]:
+        base[20] = bundle_byte
+        state._listen(ResponsePacket(
+            1, CommandCodes.INPUT_CONFIG, AnswerCodes.STATUS_UPDATE, bytes(base),
+        ))
+        assert state.get_imax_enhanced() == expected_mode
+
+
+def test_listen_input_config_short_response_does_not_crash():
+    """A truncated bundle is decoded as far as it goes without raising."""
+    client = MagicMock(spec=Client)
+    state = State(client, 1)
+    state._listen(ResponsePacket(
+        1, CommandCodes.INPUT_CONFIG, AnswerCodes.STATUS_UPDATE,
+        _INPUT_CONFIG_RESPONSE[:12],  # only name + lip_sync + 2ch mode
+    ))
+    assert state._state[CommandCodes.INPUT_NAME] == b"HDMI Cable"
+    assert state.get_lipsync_delay() == 25.0
+    assert CommandCodes.BASS_EQUALIZATION not in state._state
 
 
 # --- Save/Restore Settings (0x06) ---
@@ -1078,6 +1166,46 @@ async def test_update_skips_unsupported_commands():
     assert CommandCodes.VIDEO_SELECTION not in requested_commands
     # But universal commands like POWER should still be requested
     assert CommandCodes.POWER in requested_commands
+
+
+async def test_update_substitutes_input_config_for_bundled_commands():
+    """On models that support INPUT_CONFIG, one bundle request replaces the
+    per-CC requests for every command the bundle carries."""
+    from arcam.fmj.errors import CommandInvalidAtThisTime
+
+    client = MagicMock(spec=Client)
+    client.connected = True
+    client.request.side_effect = CommandInvalidAtThisTime()
+    state = State(client, 1)
+    state._amxduet = AmxDuetResponse({"Device-Model": "AVR20"})
+
+    await asyncio.gather(*await state.get_update_tasks())
+    requested = [call.args[1] for call in client.request.call_args_list]
+
+    assert requested.count(CommandCodes.INPUT_CONFIG) == 1
+    for cc in INPUT_CONFIG_FIELDS:
+        assert cc not in requested, f"{cc.name} should have been replaced by INPUT_CONFIG"
+
+
+async def test_update_no_input_config_substitution_when_unsupported():
+    """When INPUT_CONFIG isn't supported, bundled commands fall back to individual queries."""
+    from arcam.fmj.errors import CommandInvalidAtThisTime
+
+    client = MagicMock(spec=Client)
+    client.connected = True
+    client.request.side_effect = CommandInvalidAtThisTime()
+    state = State(client, 1)
+    state._amxduet = AmxDuetResponse({"Device-Model": "AVR20"})
+    # Force INPUT_CONFIG to look unsupported on this device.
+    state._unsupported_commands.add(CommandCodes.INPUT_CONFIG)
+
+    await asyncio.gather(*await state.get_update_tasks())
+    requested = [call.args[1] for call in client.request.call_args_list]
+
+    assert CommandCodes.INPUT_CONFIG not in requested
+    # At least one bundle-covered command was queried individually (the fallback path).
+    bundle_requested = [cc for cc in requested if cc in INPUT_CONFIG_FIELDS]
+    assert bundle_requested, "Expected bundle-covered commands to be queried individually when bundle unsupported"
 
 
 async def test_update_records_command_not_recognised():
