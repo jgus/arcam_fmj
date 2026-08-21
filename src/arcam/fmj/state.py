@@ -335,7 +335,7 @@ class State:
     def _api_model(self) -> ApiModel:
         return api_model_for(self.model)
 
-    def _is_command_supported(self, cc: CommandCodes) -> bool:
+    def is_command_supported(self, cc: CommandCodes) -> bool:
         """Check if a command is supported by the current device."""
         if cc in self._unsupported_commands:
             return False
@@ -352,7 +352,7 @@ class State:
 
     def _should_update(self, cc: CommandCodes) -> bool:
         """Whether the update loop should fetch this command right now."""
-        if not self._is_command_supported(cc):
+        if not self.is_command_supported(cc):
             return False
         if not (cc.flags & CommandFlags.ZONE_SUPPORT) and self._zn != 1:
             return False
@@ -367,7 +367,7 @@ class State:
 
     def _require_command(self, cc: CommandCodes) -> None:
         """Raise UnsupportedCommand if the command is not supported."""
-        if not self._is_command_supported(cc):
+        if not self.is_command_supported(cc):
             raise UnsupportedCommand(cc=cc, model=self.model)
 
     async def _request(self, zn: int, cc: CommandCodes, data: bytes, priority: int = 0) -> bytes:

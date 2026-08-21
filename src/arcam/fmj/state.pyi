@@ -84,6 +84,7 @@ class State:
     def get_rc5code(
         self, table: dict[tuple[ApiModel, int], dict[Any, bytes]], value: Any
     ) -> bytes: ...
+    def is_command_supported(self, cc: CommandCodes) -> bool: ...
 
     # --- Update provider ---
 
