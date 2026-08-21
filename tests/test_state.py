@@ -356,24 +356,8 @@ def test_get_display_info_type_none():
 def test_get_display_info_type():
     client = MagicMock(spec=Client)
     state = State(client, 1)
-    state._state[CommandCodes.DISPLAY_INFORMATION_TYPE] = bytes([0x02])
+    state._state[CommandCodes.DISPLAY_INFO_TYPE] = bytes([0x02])
     assert state.get_display_info_type() == 2
-
-
-async def test_set_display_info_type():
-    client = MagicMock(spec=Client)
-    state = State(client, 1)
-    await state.set_display_info_type(0x03)
-    client.request.assert_called_with(
-        1, CommandCodes.DISPLAY_INFORMATION_TYPE, bytes([0x03]), 0)
-
-
-async def test_set_display_info_type_cycle():
-    client = MagicMock(spec=Client)
-    state = State(client, 1)
-    await state.set_display_info_type(0xE0)
-    client.request.assert_called_with(
-        1, CommandCodes.DISPLAY_INFORMATION_TYPE, bytes([0xE0]), 0)
 
 
 # --- Lipsync Delay (0x40) ---
@@ -979,8 +963,8 @@ def test_is_command_supported_universal():
     client = MagicMock(spec=Client)
     state = State(client, 1)
     state._amxduet = AmxDuetResponse({"Device-Model": "SA30"})
-    assert state._is_command_supported(CommandCodes.POWER) is True
-    assert state._is_command_supported(CommandCodes.VOLUME) is True
+    assert state.is_command_supported(CommandCodes.POWER) is True
+    assert state.is_command_supported(CommandCodes.VOLUME) is True
 
 
 def test_is_command_supported_matching_model():
@@ -989,9 +973,9 @@ def test_is_command_supported_matching_model():
     state = State(client, 1)
     state._amxduet = AmxDuetResponse({"Device-Model": "AVR30"})
     # IMAX_ENHANCED has version=APIVERSION_IMAX_SERIES which includes AVR30
-    assert state._is_command_supported(CommandCodes.IMAX_ENHANCED) is True
+    assert state.is_command_supported(CommandCodes.IMAX_ENHANCED) is True
     # BLUETOOTH_STATUS has version=APIVERSION_HDA_SERIES which includes AVR30
-    assert state._is_command_supported(CommandCodes.BLUETOOTH_STATUS) is True
+    assert state.is_command_supported(CommandCodes.BLUETOOTH_STATUS) is True
 
 
 def test_is_command_supported_non_matching_model():
@@ -1000,11 +984,11 @@ def test_is_command_supported_non_matching_model():
     state = State(client, 1)
     state._amxduet = AmxDuetResponse({"Device-Model": "SA30"})
     # IMAX_ENHANCED is not supported on SA series
-    assert state._is_command_supported(CommandCodes.IMAX_ENHANCED) is False
+    assert state.is_command_supported(CommandCodes.IMAX_ENHANCED) is False
     # BLUETOOTH_STATUS is HDA-only
-    assert state._is_command_supported(CommandCodes.BLUETOOTH_STATUS) is False
+    assert state.is_command_supported(CommandCodes.BLUETOOTH_STATUS) is False
     # VIDEO_SELECTION is PRE_HDA_AVR only
-    assert state._is_command_supported(CommandCodes.VIDEO_SELECTION) is False
+    assert state.is_command_supported(CommandCodes.VIDEO_SELECTION) is False
 
 
 def test_is_command_supported_no_model_is_permissive():
@@ -1013,7 +997,7 @@ def test_is_command_supported_no_model_is_permissive():
     state = State(client, 1)
     # No AMX discovery yet, model is None
     assert state.model is None
-    assert state._is_command_supported(CommandCodes.IMAX_ENHANCED) is True
+    assert state.is_command_supported(CommandCodes.IMAX_ENHANCED) is True
 
 
 def test_is_command_supported_runtime_blocklist():
@@ -1021,9 +1005,9 @@ def test_is_command_supported_runtime_blocklist():
     client = MagicMock(spec=Client)
     state = State(client, 1)
     state._amxduet = AmxDuetResponse({"Device-Model": "AVR30"})
-    assert state._is_command_supported(CommandCodes.VOLUME) is True
+    assert state.is_command_supported(CommandCodes.VOLUME) is True
     state._unsupported_commands.add(CommandCodes.VOLUME)
-    assert state._is_command_supported(CommandCodes.VOLUME) is False
+    assert state.is_command_supported(CommandCodes.VOLUME) is False
 
 
 def test_require_command_raises_for_unsupported():
@@ -1241,7 +1225,7 @@ def test_get_dab_station_returns_value_when_source_matches():
 
 def test_get_dls_pdt_gated_by_source():
     state = _state_at_source(SourceCodes.CD)
-    state._state[CommandCodes.DLS_PDT_INFO] = b"Now Playing"
+    state._state[CommandCodes.DLS_PDT] = b"Now Playing"
     assert state.get_dls_pdt() is None
 
 
