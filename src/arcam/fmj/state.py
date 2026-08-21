@@ -7,6 +7,7 @@ from typing import Any, TypeVar
 import attr
 
 from .codecs import (
+    AnalogueDigitalSelect,
     AnswerCodes,
     AuroMatic3DPreset,
     AutoShutdown,
@@ -140,6 +141,8 @@ def add_accessors(cls: type) -> type:
                 setattr(cls, setter_name, _make_rc5_fallback_setter(cc, schema))
             elif hasattr(schema, "encode") and not (cc.flags & CommandFlags.READ_ONLY):
                 setattr(cls, setter_name, _make_setter(cc, schema))
+            elif hasattr(schema, "encode") and cc in INPUT_CONFIG_FIELDS:
+                setattr(cls, setter_name, _make_bundle_setter(cc, schema))
 
         if schema.inc_dec is not None:
             inc_name = f"inc_{stem}"
@@ -214,6 +217,27 @@ def _make_rc5_fallback_setter(cc, schema: Rc5Fallback):
             await self._send_rc5(schema.rc5_table, value)
 
     setter.__name__ = f"set_{cc.name.lower()}"
+    setter.__qualname__ = f"State.{setter.__name__}"
+    if val_name:
+        setter.__annotations__ = {"value": val_name, "return": None}
+    return setter
+
+
+def _make_bundle_setter(cc, schema):
+    """Create an async setter that routes through ``write_input_config``.
+
+    Used for bundle-only fields (``_RO`` synthetic CCs at 0x28XX, plus
+    INPUT_NAME) where the only way to write is via the INPUT_CONFIG bundle.
+    """
+    val_name, _ = _schema_types(schema)
+    stem = cc.name.lower()
+
+    async def setter(self, value):
+        if not self._is_command_supported_on_source(cc):
+            return
+        await self.write_input_config(**{stem: value})
+
+    setter.__name__ = f"set_{stem}"
     setter.__qualname__ = f"State.{setter.__name__}"
     if val_name:
         setter.__annotations__ = {"value": val_name, "return": None}
@@ -347,11 +371,11 @@ class State:
 
     def _unpack_input_config(self, data: bytes) -> None:
         """Fan an INPUT_CONFIG (0x28) response out into the per-field state entries."""
-        for cc, (field_slice, transform) in INPUT_CONFIG_FIELDS.items():
+        for cc, (field_slice, decoder, _) in INPUT_CONFIG_FIELDS.items():
             if field_slice.stop > len(data):
                 continue
             field_bytes = data[field_slice]
-            self._state[cc] = transform(field_bytes) if transform is not None else field_bytes
+            self._state[cc] = decoder(field_bytes) if decoder is not None else field_bytes
 
     def is_command_supported(self, cc: CommandCodes) -> bool:
         """Check if a command can be sent over the wire to the current device."""
@@ -785,6 +809,81 @@ class State:
         if not self._is_command_supported_on_source(CommandCodes.DAB_SCAN):
             return
         await self._request(self._zn, CommandCodes.DAB_SCAN, bytes([0x01]))
+
+    # INPUT_CONFIG (0x28)
+    async def write_input_config(
+        self,
+        *,
+        input_name: str | None = None,
+        lipsync_delay: float | None = None,
+        decode_mode_2ch_per_source: DecodeMode2CHPerSource | None = None,
+        decode_mode_mch_per_source: DecodeModeMCHPerSource | None = None,
+        bass_equalization: float | None = None,
+        treble_equalization: float | None = None,
+        room_equalization: RoomEqMode | None = None,
+        input_trim: InputTrim | None = None,
+        dolby_audio: DolbyAudioMode | None = None,
+        stereo_mode: StereoMode | None = None,
+        sub_stereo_trim: float | None = None,
+        imax_enhanced: ImaxEnhancedMode | None = None,
+        auro_matic_3d: AuroMatic3DPreset | None = None,
+        auro_matic_strength: int | None = None,
+        select_analog_digital: AnalogueDigitalSelect | None = None,
+        cd_direct: bool | None = None,
+    ) -> None:
+        """Update one or more INPUT_CONFIG (0x28) fields for the current source.
+
+        Reads the current bundle (querying the device if not cached), splices
+        in the encoded bytes for each non-None argument, and writes the
+        25-byte bundle back. The write applies to whichever input is
+        currently selected on zone 1; INPUT_CONFIG is anchored to zone 1
+        regardless of the querying zone.
+        """
+        self._require_command(CommandCodes.INPUT_CONFIG)
+        overrides: dict[CommandCodes, Any] = {
+            CommandCodes.INPUT_NAME: input_name,
+            CommandCodes.LIPSYNC_DELAY: lipsync_delay,
+            CommandCodes.DECODE_MODE_2CH_PER_SOURCE: decode_mode_2ch_per_source,
+            CommandCodes.DECODE_MODE_MCH_PER_SOURCE: decode_mode_mch_per_source,
+            CommandCodes.BASS_EQUALIZATION: bass_equalization,
+            CommandCodes.TREBLE_EQUALIZATION: treble_equalization,
+            CommandCodes.ROOM_EQUALIZATION: room_equalization,
+            CommandCodes.INPUT_TRIM: input_trim,
+            CommandCodes.DOLBY_AUDIO: dolby_audio,
+            CommandCodes.STEREO_MODE: stereo_mode,
+            CommandCodes.SUB_STEREO_TRIM: sub_stereo_trim,
+            CommandCodes.IMAX_ENHANCED: imax_enhanced,
+            CommandCodes.AURO_MATIC_3D: auro_matic_3d,
+            CommandCodes.AURO_MATIC_STRENGTH: auro_matic_strength,
+            CommandCodes.SELECT_ANALOG_DIGITAL: select_analog_digital,
+            CommandCodes.CD_DIRECT: cd_direct,
+        }
+        overrides = {cc: v for cc, v in overrides.items() if v is not None}
+        if not overrides:
+            return
+
+        current_source = self._state.get(CommandCodes.CURRENT_SOURCE)
+        current = self._state.get(CommandCodes.INPUT_CONFIG)
+        if current is None or self._queried_source != current_source:
+            current = await self._request(self._zn, CommandCodes.INPUT_CONFIG, b"\xF0")
+            self._state[CommandCodes.INPUT_CONFIG] = current
+            self._queried_source = current_source
+
+        new = bytearray(current)
+        for cc, value in overrides.items():
+            field_slice, _, encoder = INPUT_CONFIG_FIELDS[cc]
+            encoded = cc.schema.encode(value)
+            if encoder is not None:
+                encoded = encoder(encoded)
+            width = field_slice.stop - field_slice.start
+            if len(encoded) > width:
+                raise ValueError(
+                    f"{cc.name} encoded to {len(encoded)} bytes; "
+                    f"INPUT_CONFIG field is {width} bytes"
+                )
+            new[field_slice] = encoded.ljust(width, b"\x00")
+
+        await self._request(self._zn, CommandCodes.INPUT_CONFIG, bytes(new))
 
     # ROOM_EQ_NAMES (0x34)
     def get_room_eq_names(self) -> list[str] | None:

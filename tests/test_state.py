@@ -1,6 +1,6 @@
 import asyncio
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from arcam.fmj.client import Client
 from arcam.fmj.state import State, _get_scaled_negative, _set_scaled
 from arcam.fmj.codecs import (
@@ -12,6 +12,7 @@ from arcam.fmj.codecs import (
     HdmiOutput,
     ImaxEnhancedMode,
     IncomingAudioFormat,
+    InputTrim,
     NetworkPlaybackStatus,
     NowPlayingEncoder,
     NowPlayingInfo,
@@ -398,6 +399,125 @@ def test_listen_input_config_short_response_does_not_crash():
     assert state._state[CommandCodes.INPUT_NAME] == b"HDMI Cable"
     assert state.get_lipsync_delay() == 25.0
     assert CommandCodes.BASS_EQUALIZATION not in state._state
+
+
+# --- INPUT_CONFIG (0x28) bundle write ---
+
+
+async def test_write_input_config_noop_skips_request():
+    client = MagicMock(spec=Client)
+    state = State(client, 1)
+    state._state[CommandCodes.INPUT_CONFIG] = _INPUT_CONFIG_RESPONSE
+    await state.write_input_config()
+    client.request.assert_not_called()
+
+
+async def test_write_input_config_single_field():
+    client = MagicMock(spec=Client)
+    state = State(client, 1)
+    state._state[CommandCodes.INPUT_CONFIG] = _INPUT_CONFIG_RESPONSE
+    await state.write_input_config(lipsync_delay=50.0)
+    expected = bytearray(_INPUT_CONFIG_RESPONSE)
+    expected[10] = 0x0A  # 50ms / 5ms step
+    client.request.assert_called_with(1, CommandCodes.INPUT_CONFIG, bytes(expected), 0)
+
+
+async def test_write_input_config_pads_short_name():
+    client = MagicMock(spec=Client)
+    state = State(client, 1)
+    state._state[CommandCodes.INPUT_CONFIG] = _INPUT_CONFIG_RESPONSE
+    await state.write_input_config(input_name="HDMI")
+    expected = bytearray(_INPUT_CONFIG_RESPONSE)
+    expected[0:10] = b"HDMI\x00\x00\x00\x00\x00\x00"
+    client.request.assert_called_with(1, CommandCodes.INPUT_CONFIG, bytes(expected), 0)
+
+
+async def test_write_input_config_name_too_long_raises():
+    client = MagicMock(spec=Client)
+    state = State(client, 1)
+    state._state[CommandCodes.INPUT_CONFIG] = _INPUT_CONFIG_RESPONSE
+    with pytest.raises(ValueError, match="INPUT_NAME"):
+        await state.write_input_config(input_name="12345678901")  # 11 chars
+    client.request.assert_not_called()
+
+
+async def test_write_input_config_imax_uses_bundle_encoding():
+    """IMAX schema.encode produces 0xF1/0xF2/0xF3; bundle uses 0x00/0x01/0x02."""
+    client = MagicMock(spec=Client)
+    state = State(client, 1)
+    state._state[CommandCodes.INPUT_CONFIG] = _INPUT_CONFIG_RESPONSE
+    await state.write_input_config(imax_enhanced=ImaxEnhancedMode.OFF)
+    expected = bytearray(_INPUT_CONFIG_RESPONSE)
+    expected[20] = 0x02  # bundle byte for OFF
+    client.request.assert_called_with(1, CommandCodes.INPUT_CONFIG, bytes(expected), 0)
+
+
+async def test_write_input_config_multiple_fields():
+    client = MagicMock(spec=Client)
+    state = State(client, 1)
+    state._state[CommandCodes.INPUT_CONFIG] = _INPUT_CONFIG_RESPONSE
+    await state.write_input_config(
+        bass_equalization=-1.0,
+        treble_equalization=4.0,
+        cd_direct=False,
+    )
+    expected = bytearray(_INPUT_CONFIG_RESPONSE)
+    expected[13] = 0x81  # bass -1
+    expected[14] = 0x04  # treble +4
+    expected[24] = 0x00  # cd_direct off
+    client.request.assert_called_with(1, CommandCodes.INPUT_CONFIG, bytes(expected), 0)
+
+
+async def test_bundle_only_setter_routes_through_write_input_config():
+    """Bundle-only synthetic CCs get auto-gen setters that delegate to write_input_config."""
+    client = MagicMock(spec=Client)
+    state = State(client, 1)
+    state._state[CommandCodes.INPUT_CONFIG] = _INPUT_CONFIG_RESPONSE
+    await state.set_input_trim(InputTrim.V2)
+    expected = bytearray(_INPUT_CONFIG_RESPONSE)
+    expected[16] = InputTrim.V2.value
+    client.request.assert_called_with(1, CommandCodes.INPUT_CONFIG, bytes(expected), 0)
+
+
+async def test_set_input_name_routes_through_write_input_config():
+    client = MagicMock(spec=Client)
+    state = State(client, 1)
+    state._state[CommandCodes.INPUT_CONFIG] = _INPUT_CONFIG_RESPONSE
+    await state.set_input_name("Cable")
+    expected = bytearray(_INPUT_CONFIG_RESPONSE)
+    expected[0:10] = b"Cable\x00\x00\x00\x00\x00"
+    client.request.assert_called_with(1, CommandCodes.INPUT_CONFIG, bytes(expected), 0)
+
+
+async def test_write_input_config_fetches_bundle_if_not_cached():
+    """If INPUT_CONFIG isn't cached, fetch it before splicing."""
+    client = MagicMock(spec=Client)
+    client.request = AsyncMock(side_effect=[_INPUT_CONFIG_RESPONSE, b""])
+    state = State(client, 1)
+    await state.write_input_config(lipsync_delay=25.0)
+    assert client.request.call_count == 2
+    assert client.request.call_args_list[0].args[:3] == (1, CommandCodes.INPUT_CONFIG, b"\xF0")
+    expected = bytearray(_INPUT_CONFIG_RESPONSE)
+    expected[10] = 0x05
+    assert client.request.call_args_list[1].args[:3] == (1, CommandCodes.INPUT_CONFIG, bytes(expected))
+
+
+async def test_write_input_config_refetches_when_source_stale():
+    """If the cached bundle is from a different source than current, refetch first."""
+    client = MagicMock(spec=Client)
+    fresh = bytearray(_INPUT_CONFIG_RESPONSE)
+    fresh[0:10] = b"BT        "
+    client.request = AsyncMock(side_effect=[bytes(fresh), b""])
+    state = State(client, 1)
+    state._state[CommandCodes.INPUT_CONFIG] = _INPUT_CONFIG_RESPONSE  # cached from prev source
+    state._state[CommandCodes.CURRENT_SOURCE] = b"\x12"  # BT
+    state._queried_source = b"\x08"  # AUX — stale
+    await state.write_input_config(lipsync_delay=25.0)
+    assert client.request.call_args_list[0].args[:3] == (1, CommandCodes.INPUT_CONFIG, b"\xF0")
+    expected = bytearray(fresh)
+    expected[10] = 0x05
+    assert client.request.call_args_list[1].args[:3] == (1, CommandCodes.INPUT_CONFIG, bytes(expected))
+    assert state._queried_source == b"\x12"
 
 
 # --- Save/Restore Settings (0x06) ---

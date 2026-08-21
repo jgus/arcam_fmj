@@ -174,7 +174,7 @@ class CommandCodes(IntOrTypeEnum):
 
     # --- Input ---
     VIDEO_SELECTION                 = 0x0A, _PRE_HDA,   _U,               None,    ByteEnum(VideoSelection)
-    SELECT_ANALOG_DIGITAL           = 0x0B, _AVR,       _Z
+    SELECT_ANALOG_DIGITAL           = 0x0B, _AVR,       _Z,               None,    ByteEnum(AnalogueDigitalSelect)
     IMAX_ENHANCED                   = 0x0C, _IMAX,      _U,               None,    ByteEnum(ImaxEnhancedMode, set_map=IMAX_ENHANCED_SET_MAP)  # was "Video input type" in 450 (SH256E); not AVR5 (SH289E)
 
     # --- Output ---
@@ -298,27 +298,37 @@ class CommandCodes(IntOrTypeEnum):
 #: Per-field layout of the INPUT_CONFIG (0x28) response, ordered by slice to
 #: mirror the on-the-wire byte layout. Keyed by the CC each bundle field
 #: maps to — either an existing individual-CC or a synthetic 0x28XX bundle-
-#: only CC. The value is a ``(slice, decoder)`` pair where decoder produces
-#: the bytes a fresh query of that CC would have returned, or ``None`` to
-#: pass the slice through unchanged.
+#: only CC. The value is a ``(slice, decoder, encoder)`` triple:
+#:
+#:   - ``decoder``: bundle bytes → bytes a fresh standalone-CC query would have
+#:     returned (so ``schema.decode`` works on cached state). ``None`` = identity.
+#:   - ``encoder``: bytes ``schema.encode`` produces for a standalone-CC write
+#:     → bundle bytes (used by ``State.write_input_config``). ``None`` = identity.
+#:
+#: Only IMAX_ENHANCED needs a non-identity transform: the bundle uses
+#: 0x00/0x01/0x02 = Auto/On/Off, while the standalone CC reads 0x00/0x01/0x02
+#: = Off/On/Auto and writes 0xF1/0xF2/0xF3 via IMAX_ENHANCED_SET_MAP.
+#:
 #: See: SH289E "Input config (0x28)".
 # fmt: off
-INPUT_CONFIG_FIELDS: dict[CommandCodes, tuple[slice, Callable[[bytes], bytes] | None]] = {
-    CommandCodes.INPUT_NAME:                 (slice( 0, 10), None),
-    CommandCodes.LIPSYNC_DELAY:              (slice(10, 11), None),
-    CommandCodes.DECODE_MODE_2CH_PER_SOURCE: (slice(11, 12), None),
-    CommandCodes.DECODE_MODE_MCH_PER_SOURCE: (slice(12, 13), None),
-    CommandCodes.BASS_EQUALIZATION:          (slice(13, 14), None),
-    CommandCodes.TREBLE_EQUALIZATION:        (slice(14, 15), None),
-    CommandCodes.ROOM_EQUALIZATION:          (slice(15, 16), None),
-    CommandCodes.INPUT_TRIM:                 (slice(16, 17), None),
-    CommandCodes.DOLBY_AUDIO:                (slice(17, 18), None),
-    CommandCodes.STEREO_MODE:                (slice(18, 19), None),
-    CommandCodes.SUB_STEREO_TRIM:            (slice(19, 20), None),
-    CommandCodes.IMAX_ENHANCED:              (slice(20, 21), lambda b: bytes([IMAX_ENHANCED_BUNDLE_DECODE_MAP.get(b[0], b[0])])),
-    CommandCodes.AURO_MATIC_3D:              (slice(21, 22), None),
-    CommandCodes.AURO_MATIC_STRENGTH:        (slice(22, 23), None),
-    CommandCodes.SELECT_ANALOG_DIGITAL:      (slice(23, 24), None),
-    CommandCodes.CD_DIRECT:                  (slice(24, 25), None),
+INPUT_CONFIG_FIELDS: dict[CommandCodes, tuple[slice, Callable[[bytes], bytes] | None, Callable[[bytes], bytes] | None]] = {
+    CommandCodes.INPUT_NAME:                 (slice( 0, 10), None, None),
+    CommandCodes.LIPSYNC_DELAY:              (slice(10, 11), None, None),
+    CommandCodes.DECODE_MODE_2CH_PER_SOURCE: (slice(11, 12), None, None),
+    CommandCodes.DECODE_MODE_MCH_PER_SOURCE: (slice(12, 13), None, None),
+    CommandCodes.BASS_EQUALIZATION:          (slice(13, 14), None, None),
+    CommandCodes.TREBLE_EQUALIZATION:        (slice(14, 15), None, None),
+    CommandCodes.ROOM_EQUALIZATION:          (slice(15, 16), None, None),
+    CommandCodes.INPUT_TRIM:                 (slice(16, 17), None, None),
+    CommandCodes.DOLBY_AUDIO:                (slice(17, 18), None, None),
+    CommandCodes.STEREO_MODE:                (slice(18, 19), None, None),
+    CommandCodes.SUB_STEREO_TRIM:            (slice(19, 20), None, None),
+    CommandCodes.IMAX_ENHANCED:              (slice(20, 21),
+                                              lambda b: bytes([IMAX_ENHANCED_BUNDLE_DECODE_MAP.get(b[0], b[0])]),
+                                              lambda b: bytes([IMAX_ENHANCED_BUNDLE_ENCODE_MAP[b[0]]])),
+    CommandCodes.AURO_MATIC_3D:              (slice(21, 22), None, None),
+    CommandCodes.AURO_MATIC_STRENGTH:        (slice(22, 23), None, None),
+    CommandCodes.SELECT_ANALOG_DIGITAL:      (slice(23, 24), None, None),
+    CommandCodes.CD_DIRECT:                  (slice(24, 25), None, None),
 }
 # fmt: on

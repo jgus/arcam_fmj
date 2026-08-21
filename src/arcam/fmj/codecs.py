@@ -89,6 +89,20 @@ class VideoSelection(IntOrTypeEnum):
     GAME = 0x05
     STB = 0x06
 
+# --- CC 0x0B: SELECT_ANALOG_DIGITAL ---
+
+class AnalogueDigitalSelect(IntOrTypeEnum):
+    """Audio input type for the current source.
+
+    Used by SELECT_ANALOG_DIGITAL (0x0B) and INPUT_CONFIG (0x28) byte 24.
+
+    See: SH289E "Select analogue/digital (0x0B)".
+    """
+
+    ANALOGUE = 0x00
+    DIGITAL = 0x01
+    HDMI = 0x02
+
 # --- CC 0x0C: IMAX_ENHANCED ---
 
 class ImaxEnhancedMode(IntOrTypeEnum):
@@ -121,6 +135,14 @@ IMAX_ENHANCED_BUNDLE_DECODE_MAP: dict[int, ImaxEnhancedMode] = {
     0x00: ImaxEnhancedMode.AUTO,
     0x01: ImaxEnhancedMode.ON,
     0x02: ImaxEnhancedMode.OFF,
+}
+
+#: Inverse of IMAX_ENHANCED_BUNDLE_DECODE_MAP keyed by the standalone CC's
+#: set-byte (0xF1/0xF2/0xF3). Lets a bundle write reuse the standalone CC's
+#: ``schema.encode(...)`` output: encode → look up here → bundle byte.
+IMAX_ENHANCED_BUNDLE_ENCODE_MAP: dict[int, int] = {
+    IMAX_ENHANCED_SET_MAP[mode]: bundle_byte
+    for bundle_byte, mode in IMAX_ENHANCED_BUNDLE_DECODE_MAP.items()
 }
 
 # --- CC 0x10: DECODE_MODE_STATUS_2CH ---
