@@ -28,14 +28,17 @@ from arcam.fmj.codecs import (
     StringCodec,
     StructCodec,
     TemperatureCodec,
+    TemperatureSensor,
     TunerPresetCodec,
 )
 from arcam.fmj.commands import (
     COMMANDS,
     Command,
+    LIFTER_TEMPERATURE,
     OUTPUT_TEMPERATURE,
     ReadCommand,
     StepCommand,
+    TemperatureCommand,
     VOLUME,
     WriteCommand,
 )
@@ -213,8 +216,32 @@ def test_capabilities_derived_via_isinstance():
     assert isinstance(VOLUME, WriteCommand)
     assert isinstance(VOLUME, StepCommand)
     assert isinstance(OUTPUT_TEMPERATURE, ReadCommand)
+    assert isinstance(OUTPUT_TEMPERATURE, TemperatureCommand)
     assert not isinstance(OUTPUT_TEMPERATURE, WriteCommand)
     assert not isinstance(OUTPUT_TEMPERATURE, StepCommand)
+
+
+def test_lifter_temperature_supported_sensors():
+    assert LIFTER_TEMPERATURE.secondary_sensor_models == frozenset(
+        {"PA240", "PA720"}
+    )
+    assert LIFTER_TEMPERATURE.supported_sensors("PA240") == tuple(TemperatureSensor)
+    assert LIFTER_TEMPERATURE.supported_sensors("PA410") == (
+        TemperatureSensor.SENSOR_1,
+    )
+
+
+def test_output_temperature_supported_sensors():
+    assert OUTPUT_TEMPERATURE.secondary_sensor_models == frozenset(
+        {"PA240", "PA410", "PA720"}
+    )
+    assert OUTPUT_TEMPERATURE.supported_sensors("PA410") == tuple(TemperatureSensor)
+    assert OUTPUT_TEMPERATURE.supported_sensors("SA30") == (
+        TemperatureSensor.SENSOR_1,
+    )
+    assert OUTPUT_TEMPERATURE.supported_sensors(None) == (
+        TemperatureSensor.SENSOR_1,
+    )
 
 
 # --- Catalogue integrity ---

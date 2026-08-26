@@ -32,11 +32,13 @@ __all__ = [
     "Rc5Step",
     "Rc5Write",
     "ReadCommand",
+    "TemperatureCommand",
     "WriteCommand",
     "StepCommand",
     "ReadWriteCommand",
     "ReadWriteStepCommand",
     "ro",
+    "temperature",
     "rw",
     "rw_step",
     "wo",
@@ -171,6 +173,16 @@ class ReadCommand(Command[T]):
         return self.codec.decode_for_context(raw, model, source)
 
 
+@dataclass(frozen=True, eq=False, repr=False)
+class TemperatureCommand(ReadCommand[int]):
+    secondary_sensor_models: frozenset[str] = field(default_factory=frozenset)
+
+    def supported_sensors(self, model: str | None) -> tuple[TemperatureSensor, ...]:
+        if model in self.secondary_sensor_models:
+            return tuple(TemperatureSensor)
+        return (TemperatureSensor.SENSOR_1,)
+
+
 class WriteCommand(Command[T]):
     """Write capability: ``State.set`` accepts it; direct CC or RC5 fallback."""
     async def write(self, context: CommandContext, value: T) -> None:
@@ -207,6 +219,21 @@ class ReadWriteStepCommand(ReadCommand[T], WriteCommand[T], StepCommand[T]): ...
 def ro(cc: int, version: set[str] | None, flags: CommandFlags, codec: Codec[T],
        sources: frozenset[SourceCodes] | None = None) -> ReadCommand[T]:
     return ReadCommand(cc, version, flags, sources, codec)
+
+
+def temperature(
+    cc: int,
+    version: set[str],
+    flags: CommandFlags,
+    secondary_sensor_models: set[str],
+) -> TemperatureCommand:
+    return TemperatureCommand(
+        cc,
+        version,
+        flags,
+        codec=TemperatureCodec(),
+        secondary_sensor_models=frozenset(secondary_sensor_models),
+    )
 
 
 def wo(cc: int, version: set[str] | None, flags: CommandFlags, codec: Codec[T],
@@ -344,8 +371,8 @@ BLUETOOTH_STATUS                = proto  (0x50, _HDA,       _U | _NP,      _BT) 
 DC_OFFSET                       = ro     (0x51, _THERM,     _U | _NP,      BoolCodec())  # True = DC offset detected
 SHORT_CIRCUIT_STATUS            = ro     (0x52, _CLASS_G,   _U | _NP,      BoolCodec())  # True = short circuit fault
 TIMEOUT_COUNTER                 = proto  (0x55, _AMP_DIAG)
-LIFTER_TEMPERATURE              = ro     (0x56, _CLASS_G,   _U | _NP,      TemperatureCodec())
-OUTPUT_TEMPERATURE              = ro     (0x57, _THERM,     _U | _NP,      TemperatureCodec())
+LIFTER_TEMPERATURE              = temperature(0x56, _CLASS_G, _U | _NP,   {"PA240", "PA720"})
+OUTPUT_TEMPERATURE              = temperature(0x57, _THERM, _U | _NP,     {"PA240", "PA410", "PA720"})
 AUTO_SHUTDOWN_CONTROL           = rw     (0x58, _AMP_DIAG,  _U,            EnumCodec(AutoShutdown))
 
 # --- Status / Diagnostics ---
