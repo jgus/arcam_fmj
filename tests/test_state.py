@@ -1275,8 +1275,8 @@ def test_is_command_supported_universal():
     client = MagicMock(spec=Client)
     state = State(client, 1)
     state._amxduet = AmxDuetResponse({"Device-Model": "SA30"})
-    assert state._is_command_supported(POWER) is True
-    assert state._is_command_supported(VOLUME) is True
+    assert state.is_command_supported(POWER) is True
+    assert state.is_command_supported(VOLUME) is True
 
 
 def test_is_command_supported_matching_model():
@@ -1285,9 +1285,9 @@ def test_is_command_supported_matching_model():
     state = State(client, 1)
     state._amxduet = AmxDuetResponse({"Device-Model": "AVR30"})
     # IMAX_ENHANCED has version=APIVERSION_IMAX_SERIES which includes AVR30
-    assert state._is_command_supported(IMAX_ENHANCED) is True
+    assert state.is_command_supported(IMAX_ENHANCED) is True
     # BLUETOOTH_STATUS has version=APIVERSION_HDA_SERIES which includes AVR30
-    assert state._is_command_supported(BLUETOOTH_STATUS) is True
+    assert state.is_command_supported(BLUETOOTH_STATUS) is True
 
 
 def test_is_command_supported_non_matching_model():
@@ -1296,11 +1296,11 @@ def test_is_command_supported_non_matching_model():
     state = State(client, 1)
     state._amxduet = AmxDuetResponse({"Device-Model": "SA30"})
     # IMAX_ENHANCED is not supported on SA series
-    assert state._is_command_supported(IMAX_ENHANCED) is False
+    assert state.is_command_supported(IMAX_ENHANCED) is False
     # BLUETOOTH_STATUS is HDA-only
-    assert state._is_command_supported(BLUETOOTH_STATUS) is False
+    assert state.is_command_supported(BLUETOOTH_STATUS) is False
     # VIDEO_SELECTION is PRE_HDA_AVR only
-    assert state._is_command_supported(VIDEO_SELECTION) is False
+    assert state.is_command_supported(VIDEO_SELECTION) is False
 
 
 def test_is_command_supported_no_model_is_permissive():
@@ -1309,7 +1309,7 @@ def test_is_command_supported_no_model_is_permissive():
     state = State(client, 1)
     # No AMX discovery yet, model is None
     assert state.model is None
-    assert state._is_command_supported(IMAX_ENHANCED) is True
+    assert state.is_command_supported(IMAX_ENHANCED) is True
 
 
 def test_is_command_supported_runtime_blocklist():
@@ -1317,9 +1317,9 @@ def test_is_command_supported_runtime_blocklist():
     client = MagicMock(spec=Client)
     state = State(client, 1)
     state._amxduet = AmxDuetResponse({"Device-Model": "AVR30"})
-    assert state._is_command_supported(VOLUME) is True
+    assert state.is_command_supported(VOLUME) is True
     state._unsupported_commands.add(VOLUME.cc)
-    assert state._is_command_supported(VOLUME) is False
+    assert state.is_command_supported(VOLUME) is False
 
 
 def test_require_command_raises_for_unsupported():

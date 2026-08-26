@@ -246,7 +246,7 @@ class State:
         else:
             self._state[packet.cc] = None
 
-    def _is_command_supported(self, command: Command[Any]) -> bool:
+    def is_command_supported(self, command: Command[Any]) -> bool:
         if command.cc in self._unsupported_commands:
             return False
         if command.version is not None and self.model is not None:
@@ -254,7 +254,7 @@ class State:
         return True
 
     def _should_update(self, command: Command[Any]) -> bool:
-        if not self._is_command_supported(command):
+        if not self.is_command_supported(command):
             return False
         if not (command.flags & CommandFlags.ZONE_SUPPORT) and self._zn != 1:
             return False
@@ -268,7 +268,7 @@ class State:
         return True
 
     def _require_command(self, command: Command[Any]) -> None:
-        if not self._is_command_supported(command):
+        if not self.is_command_supported(command):
             raise UnsupportedCommand(cc=command, model=self.model)
 
     # --- Update provider ---
