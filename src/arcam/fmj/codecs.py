@@ -17,6 +17,7 @@ from .models import (
     APIVERSION_AURO_SERIES,
     APIVERSION_AVR_860_ONWARD_SERIES,
     APIVERSION_DOLBY_PL_SERIES,
+    APIVERSION_EXTENDED_DAC_FILTER_SERIES,
     APIVERSION_HDA_SERIES,
     APIVERSION_IMAX_SERIES,
     ApiModel,
@@ -1053,7 +1054,7 @@ class AutoShutdown(IntOrTypeEnum):
     HOURS_4 = 240
 
     @classmethod
-    def _values(cls, model: str | None) -> tuple[AutoShutdown, ...]:
+    def values_for_model(cls, model: str | None) -> tuple[AutoShutdown, ...]:
         if model in {"SA10", "SA20"}:
             return (
                 cls.DISABLED,
@@ -1076,14 +1077,14 @@ class AutoShutdown(IntOrTypeEnum):
         cls, data: bytes, model: str | None
     ) -> AutoShutdown | None:
         value = int.from_bytes(data, "big")
-        values = cls._values(model)
+        values = cls.values_for_model(model)
         if value >= len(values):
             return None
         return values[value]
 
     def to_bytes_for_model(self, model: str | None) -> bytes:
         try:
-            return bytes([self._values(model).index(self)])
+            return bytes([self.values_for_model(model).index(self)])
         except ValueError as exception:
             raise ValueError(f"{self.name} is not supported on {model}") from exception
 
@@ -1123,10 +1124,10 @@ class DacFilter(IntOrTypeEnum):
     LINEAR_FAST = 0x00
     LINEAR_SLOW = 0x01
     MINIMUM_FAST = 0x02
-    MINIMUM_SLOW = 0x03
-    BRICK_WALL = 0x04
-    CORRECTED_FAST = 0x05
-    APODIZING = 0x06
+    MINIMUM_SLOW = 0x03, APIVERSION_EXTENDED_DAC_FILTER_SERIES
+    BRICK_WALL = 0x04, APIVERSION_EXTENDED_DAC_FILTER_SERIES
+    CORRECTED_FAST = 0x05, APIVERSION_EXTENDED_DAC_FILTER_SERIES
+    APODIZING = 0x06, APIVERSION_EXTENDED_DAC_FILTER_SERIES
 
 
 class BluetoothAudioStatus(IntOrTypeEnum):

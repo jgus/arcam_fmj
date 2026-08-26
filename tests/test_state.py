@@ -19,6 +19,7 @@ from arcam.fmj.codecs import (
     AutoShutdown,
     BluetoothAudioStatus,
     CompressionMode,
+    DacFilter,
     DabDisplayInfoType,
     DisplayBrightness,
     DisplayInfoType,
@@ -47,6 +48,7 @@ from arcam.fmj.commands import (
     BASS_EQUALIZATION,
     COMPRESSION,
     DAB_STATION,
+    DAC_FILTER,
     DECODE_MODE_2CH,
     DECODE_MODE_MCH,
     DIRECT_MODE,
@@ -840,6 +842,29 @@ async def test_set_dolby_leveler():
     client.request.assert_called_once_with(
         1, DOLBY_LEVELER.cc, bytes([0x07]), 0
     )
+
+
+@pytest.mark.parametrize(
+    "model, expected",
+    [
+        ("SA10", None),
+        ("SA20", DacFilter.MINIMUM_SLOW),
+    ],
+)
+def test_get_model_specific_dac_filter(model, expected):
+    client = MagicMock(spec=Client)
+    state = State(client, 1)
+    state._amxduet = AmxDuetResponse({"Device-Model": model})
+    state._state[DAC_FILTER.cc] = bytes([0x03])
+    assert state.get(DAC_FILTER) is expected
+
+
+async def test_set_dac_filter_rejects_unsupported_sa10_filter():
+    client = MagicMock(spec=Client)
+    state = State(client, 1)
+    state._amxduet = AmxDuetResponse({"Device-Model": "SA10"})
+    with pytest.raises(ValueError, match="MINIMUM_SLOW is not supported on SA10"):
+        await state.set(DAC_FILTER, DacFilter.MINIMUM_SLOW)
 
 
 # --- Balance (0x3B) ---

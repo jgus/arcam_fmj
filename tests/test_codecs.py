@@ -12,6 +12,7 @@ import pytest
 
 from arcam.fmj.codecs import (
     BoolCodec,
+    DacFilter,
     DolbyAudioMode,
     DolbyLeveler,
     DolbyLevelerCodec,
@@ -95,6 +96,23 @@ def test_dolby_leveler_codec_rejects_invalid_values(value):
 @pytest.mark.parametrize("data", [b"", bytes(2)])
 def test_dolby_leveler_codec_rejects_invalid_length(data):
     assert DolbyLevelerCodec().decode(data) is None
+
+
+def test_dac_filter_choices_for_model():
+    assert DacFilter.values_for_model("SA10") == (
+        DacFilter.LINEAR_FAST,
+        DacFilter.LINEAR_SLOW,
+        DacFilter.MINIMUM_FAST,
+    )
+    assert DacFilter.values_for_model("SA20") == tuple(DacFilter)
+
+
+def test_dac_filter_codec_rejects_unsupported_sa10_filter():
+    codec = EnumCodec(DacFilter)
+    assert codec.encode_for_model(DacFilter.MINIMUM_FAST, "SA10") == bytes([0x02])
+    assert codec.decode_for_model(bytes([0x03]), "SA10") is None
+    with pytest.raises(ValueError, match="MINIMUM_SLOW is not supported on SA10"):
+        codec.encode_for_model(DacFilter.MINIMUM_SLOW, "SA10")
 
 
 @pytest.mark.parametrize(
