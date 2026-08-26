@@ -705,6 +705,38 @@ class DolbyAudioMode(IntOrTypeEnum):
     MUSIC = 0x02, APIVERSION_HDA_SERIES
     NIGHT = 0x03, APIVERSION_HDA_SERIES
 
+class DolbyLeveler(IntOrTypeEnum):
+    LEVEL_0 = 0x00
+    LEVEL_1 = 0x01
+    LEVEL_2 = 0x02
+    LEVEL_3 = 0x03
+    LEVEL_4 = 0x04
+    LEVEL_5 = 0x05
+    LEVEL_6 = 0x06
+    LEVEL_7 = 0x07
+    LEVEL_8 = 0x08
+    LEVEL_9 = 0x09
+    LEVEL_10 = 0x0A
+    OFF = 0xFF
+
+
+_DOLBY_LEVELER_VALUES = frozenset(DolbyLeveler)
+
+
+class DolbyLevelerCodec(Codec[DolbyLeveler]):
+    def decode(self, data: bytes) -> DolbyLeveler | None:
+        if len(data) != 1:
+            return None
+        value = data[0]
+        if value not in _DOLBY_LEVELER_VALUES:
+            return None
+        return DolbyLeveler(value)
+
+    def encode(self, value: DolbyLeveler) -> bytes:
+        if value not in _DOLBY_LEVELER_VALUES:
+            raise ValueError(f"Invalid Dolby leveler value: {value}")
+        return bytes([value])
+
 # --- CC 0x41: COMPRESSION ---
 
 class CompressionMode(IntOrTypeEnum):

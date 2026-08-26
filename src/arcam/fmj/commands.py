@@ -314,7 +314,7 @@ TREBLE_EQUALIZATION             = rw_step(0x35, _AVR,       _Z | _U,       Scale
 BASS_EQUALIZATION               = rw_step(0x36, _AVR,       _Z | _U,       ScaledCodec(-12.0, 12.0, 1.0), step=Rc5Step(RC5CODE_BASS))
 ROOM_EQUALIZATION               = rw     (0x37, _ROOM_EQ,   _Z | _U,       EnumCodec(RoomEqMode))
 DOLBY_AUDIO                     = rw     (0x38, _AVR,       _Z | _U,       EnumCodec(DolbyAudioMode))  # was "Dolby Volume" in 450/860 (SH256E/SH274E)
-DOLBY_LEVELER                   = rw     (0x39, _AVR,       _Z | _U,       IntCodec())  # per probe: AV41 still responds despite spec removal at SH289E issue C.0; 0xFF = off
+DOLBY_LEVELER                   = rw     (0x39, _AVR,       _Z | _U,       DolbyLevelerCodec())  # per probe: AV41 still responds despite spec removal at SH289E issue C.0; 0xFF = off
 DOLBY_VOLUME_CALIBRATION_OFFSET = rw     (0x3A, _AVR,       _Z | _U,       ScaledCodec(-15.0, 15.0, 1.0))  # per probe: AV41 still responds despite spec removal
 BALANCE                         = rw_step(0x3B, _AVR_SA,    _Z | _U,       ScaledCodec(-6.0, 6.0, 1.0), step=Rc5Step(RC5CODE_BALANCE))
 DOLBY_PLIIX_DIMENSION           = rw_step(0x3C, _450,       _U,            IntCodec(), step=Rc5Step(RC5CODE_DOLBY_PLIIX_DIMENSION))

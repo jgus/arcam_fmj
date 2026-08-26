@@ -23,6 +23,7 @@ from arcam.fmj.codecs import (
     DisplayBrightness,
     DisplayInfoType,
     DolbyAudioMode,
+    DolbyLeveler,
     FmDisplayInfoType,
     HdmiOutput,
     ImaxEnhancedMode,
@@ -53,6 +54,7 @@ from arcam.fmj.commands import (
     DISPLAY_INFO_TYPE,
     DLS_PDT,
     DOLBY_AUDIO,
+    DOLBY_LEVELER,
     HEADPHONES,
     IMAX_ENHANCED,
     INCOMING_AUDIO_SAMPLE_RATE,
@@ -816,6 +818,28 @@ async def test_set_dolby_audio():
     state = State(client, 1)
     await state.set(DOLBY_AUDIO, DolbyAudioMode.NIGHT)
     client.request.assert_called_with(1, DOLBY_AUDIO.cc, bytes([0x03]), 0)
+
+
+@pytest.mark.parametrize("byte_val, expected", [
+    (0x00, DolbyLeveler.LEVEL_0),
+    (0x05, DolbyLeveler.LEVEL_5),
+    (0x0A, DolbyLeveler.LEVEL_10),
+    (0xFF, DolbyLeveler.OFF),
+])
+def test_get_dolby_leveler(byte_val, expected):
+    client = MagicMock(spec=Client)
+    state = State(client, 1)
+    state._state[DOLBY_LEVELER.cc] = bytes([byte_val])
+    assert state.get(DOLBY_LEVELER) is expected
+
+
+async def test_set_dolby_leveler():
+    client = MagicMock(spec=Client)
+    state = State(client, 1)
+    await state.set(DOLBY_LEVELER, DolbyLeveler.LEVEL_7)
+    client.request.assert_called_once_with(
+        1, DOLBY_LEVELER.cc, bytes([0x07]), 0
+    )
 
 
 # --- Balance (0x3B) ---

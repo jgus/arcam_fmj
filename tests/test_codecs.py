@@ -13,6 +13,8 @@ import pytest
 from arcam.fmj.codecs import (
     BoolCodec,
     DolbyAudioMode,
+    DolbyLeveler,
+    DolbyLevelerCodec,
     EnumCodec,
     IMAX_ENHANCED_SET_MAP,
     ImaxEnhancedMode,
@@ -74,6 +76,25 @@ def test_enumcodec_asymmetric_set_map():
     assert s.decode(bytes([ImaxEnhancedMode.AUTO.value])) == ImaxEnhancedMode.AUTO
     # Encode uses the set_map
     assert s.encode(ImaxEnhancedMode.AUTO) == bytes([IMAX_ENHANCED_SET_MAP[ImaxEnhancedMode.AUTO]])
+
+
+@pytest.mark.parametrize("level", DolbyLeveler)
+def test_dolby_leveler_codec_roundtrip(level):
+    codec = DolbyLevelerCodec()
+    assert codec.decode(codec.encode(level)) is level
+
+
+@pytest.mark.parametrize("value", [0x0B, 0xF0, 0xF1, 0xF2, 0xFE])
+def test_dolby_leveler_codec_rejects_invalid_values(value):
+    codec = DolbyLevelerCodec()
+    assert codec.decode(bytes([value])) is None
+    with pytest.raises(ValueError, match="Invalid Dolby leveler value"):
+        codec.encode(DolbyLeveler(value))
+
+
+@pytest.mark.parametrize("data", [b"", bytes(2)])
+def test_dolby_leveler_codec_rejects_invalid_length(data):
+    assert DolbyLevelerCodec().decode(data) is None
 
 
 @pytest.mark.parametrize(
