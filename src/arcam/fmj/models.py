@@ -209,6 +209,8 @@ APIVERSION_DAC_FILTER_SERIES = {
     *APIVERSION_ST_SERIES,
 }
 
+APIVERSION_EXTENDED_DAC_FILTER_SERIES = APIVERSION_DAC_FILTER_SERIES - {"SA10"}
+
 class ApiModel(enum.Enum):
     """Product-family identifier used to select model-specific behaviour.
 
@@ -287,3 +289,25 @@ class IntOrTypeEnum(enum.IntEnum):
         signed: bool = False,
     ) -> _T:  # type: ignore[override]
         return cls.from_int(int.from_bytes(bytes, byteorder=byteorder, signed=signed))
+
+    @classmethod
+    def from_bytes_for_model(
+        cls: type[_T], data: bytes, model: str | None
+    ) -> _T | None:
+        value = cls.from_bytes(data)
+        if model is not None and value.version is not None and model not in value.version:
+            return None
+        return value
+
+    def to_bytes_for_model(self, model: str | None) -> bytes:
+        if model is not None and self.version is not None and model not in self.version:
+            raise ValueError(f"{self.name} is not supported on {model}")
+        return bytes([int(self)])
+
+    @classmethod
+    def values_for_model(cls: type[_T], model: str | None) -> tuple[_T, ...]:
+        return tuple(
+            value
+            for value in cls
+            if model is None or value.version is None or model in value.version
+        )

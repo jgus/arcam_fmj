@@ -7,7 +7,9 @@ individual docstrings for the mapping. Definitions are ordered by CC.
 from __future__ import annotations
 
 import enum
-from typing import Any, Union
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, Generic, TypeVar, Union
 
 import attr
 
@@ -15,11 +17,161 @@ from .models import (
     APIVERSION_AURO_SERIES,
     APIVERSION_AVR_860_ONWARD_SERIES,
     APIVERSION_DOLBY_PL_SERIES,
+    APIVERSION_EXTENDED_DAC_FILTER_SERIES,
     APIVERSION_HDA_SERIES,
     APIVERSION_IMAX_SERIES,
     ApiModel,
     IntOrTypeEnum,
 )
+
+# === Codecs ===
+# Codec[T] maps a command's data payload to/from a typed value; commands.py
+# attaches one to each Command and State.get/set delegate to decode/encode.
+# decode may return None for sentinel or out-of-range bytes. The generic codecs
+# live here; command-specific ones live with their CC below.
+
+_T = TypeVar("_T")
+_E = TypeVar("_E", bound=IntOrTypeEnum)
+
+
+def _get_scaled_negative(
+    data: bytes | None, min_value: float, max_value: float, scale: float
+) -> float | None:
+    if data is None or len(data) != 1:
+        return None
+    neg_limit = round(-min_value / scale) + 0x80
+    pos_limit = round(max_value / scale)
+    byte_val = data[0]
+    if 0x81 <= byte_val <= neg_limit:
+        return -(byte_val - 0x80) * scale
+    if 0x00 <= byte_val <= pos_limit:
+        return byte_val * scale
+    return None
+
+
+def _set_scaled(value: float, min_value: float, max_value: float, scale: float) -> int:
+    value = max(min_value, min(max_value, value))
+    iv = round(value / scale)
+    return iv if iv >= 0 else 0x80 - iv
+
+
+class Codec(Generic[_T]):
+    """Maps a command payload to/from a typed value."""
+
+    def decode(self, data: bytes) -> _T | None:
+        raise NotImplementedError
+
+    def encode(self, value: _T) -> bytes:
+        raise NotImplementedError
+
+    def decode_for_model(self, data: bytes, model: str | None) -> _T | None:
+        return self.decode(data)
+
+    def decode_for_context(
+        self, data: bytes, model: str | None, source: SourceCodes | None
+    ) -> _T | None:
+        return self.decode_for_model(data, model)
+
+    def encode_for_model(self, value: _T, model: str | None) -> bytes:
+        return self.encode(value)
+
+
+@dataclass(frozen=True)
+class BoolCodec(Codec[bool]):
+    """1 byte ↔ bool. inverted=True flips the mapping (MUTE)."""
+
+    inverted: bool = False
+
+    def decode(self, data: bytes) -> bool | None:
+        if len(data) != 1:
+            return None
+        v = data[0]
+        return v == 0x00 if self.inverted else v == 0x01
+
+    def encode(self, value: bool) -> bytes:
+        if self.inverted:
+            return bytes([0x00 if value else 0x01])
+        return bytes([0x01 if value else 0x00])
+
+
+class IntCodec(Codec[int]):
+    """1 byte ↔ int."""
+
+    def decode(self, data: bytes) -> int | None:
+        if len(data) != 1:
+            return None
+        return data[0]
+
+    def encode(self, value: int) -> bytes:
+        return bytes([value])
+
+
+@dataclass(frozen=True)
+class EnumCodec(Codec[_E]):
+    """1 byte ↔ IntOrTypeEnum via from_bytes / value. set_map supplies the
+    asymmetric write codes for IMAX_ENHANCED and ZONE_1_OSD_ON_OFF."""
+
+    enum_cls: type[_E]
+    set_map: dict[_E, int] | None = None
+
+    def decode(self, data: bytes) -> _E | None:
+        if len(data) != 1:
+            return None
+        return self.enum_cls.from_bytes(data)
+
+    def encode(self, value: _E) -> bytes:
+        if self.set_map is not None:
+            return bytes([self.set_map[value]])
+        return bytes([int(value)])
+
+    def decode_for_model(self, data: bytes, model: str | None) -> _E | None:
+        if len(data) != 1:
+            return None
+        return self.enum_cls.from_bytes_for_model(data, model)
+
+    def encode_for_model(self, value: _E, model: str | None) -> bytes:
+        if self.set_map is not None:
+            return self.encode(value)
+        return value.to_bytes_for_model(model)
+
+
+@dataclass(frozen=True)
+class ScaledCodec(Codec[float]):
+    """Negative-biased scaled float; out-of-range bytes decode to None."""
+
+    min_value: float
+    max_value: float
+    scale: float
+
+    def decode(self, data: bytes) -> float | None:
+        return _get_scaled_negative(data, self.min_value, self.max_value, self.scale)
+
+    def encode(self, value: float) -> bytes:
+        return bytes([_set_scaled(value, self.min_value, self.max_value, self.scale)])
+
+
+@dataclass(frozen=True)
+class StringCodec(Codec[str]):
+    """N bytes ↔ str, decoded with errors='replace' and trailing whitespace stripped."""
+
+    encoding: str = "utf-8"
+
+    def decode(self, data: bytes) -> str:
+        return data.decode(self.encoding, errors="replace").rstrip()
+
+    def encode(self, value: str) -> bytes:
+        return value.encode(self.encoding)
+
+
+@dataclass(frozen=True)
+class StructCodec(Codec[_T]):
+    """Multi-byte struct via a from_bytes callable (read-only)."""
+
+    parse: Callable[[bytes], _T]
+
+    def decode(self, data: bytes) -> _T:
+        return self.parse(data)
+
 
 # --- AC byte (all responses) ---
 
@@ -50,6 +202,17 @@ class DisplayBrightness(IntOrTypeEnum):
     L1 = 0x01
     L2 = 0x02
 
+
+class SoftwareVersionCodec(Codec[str]):
+    def decode(self, data: bytes) -> str | None:
+        if len(data) == 2:
+            major, minor = data
+        elif len(data) == 3 and 0xF0 <= data[0] <= 0xF5:
+            _, major, minor = data
+        else:
+            return None
+        return f"{major}.{minor}"
+
 # --- CC 0x06: SAVE_RESTORE_COPY_OF_SETTINGS ---
 
 class SaveRestoreSubCommand(enum.IntEnum):
@@ -68,6 +231,93 @@ class SaveRestoreSubCommand(enum.IntEnum):
 #: Confirmation pattern (Data2-3) required by SAVE_RESTORE_COPY_OF_SETTINGS
 #: (0x06). See: SH289E "Save/Restore secure copy of settings (0x06)".
 SAVE_RESTORE_CONFIRMATION = bytes([0x55, 0x55])
+
+
+class DisplayInfoType(IntOrTypeEnum):
+    PROCESSING = 0x00
+    CYCLE = 0xE0
+
+
+class FmDisplayInfoType(IntOrTypeEnum):
+    RADIO_TEXT = 0x01
+    PROGRAMME_TYPE = 0x02
+    SIGNAL_STRENGTH = 0x03
+
+
+class DabDisplayInfoType(IntOrTypeEnum):
+    RADIO_TEXT = 0x01
+    GENRE = 0x02
+    SIGNAL_QUALITY = 0x03
+    BIT_RATE = 0x04
+
+
+class NetworkDisplayInfoType(IntOrTypeEnum):
+    TRACK = 0x01
+    ARTIST = 0x02
+    ALBUM = 0x03
+    AUDIO_TYPE = 0x04
+    SAMPLE_RATE = 0x05
+
+
+DisplayInfoTypeValue = (
+    DisplayInfoType
+    | FmDisplayInfoType
+    | DabDisplayInfoType
+    | NetworkDisplayInfoType
+)
+
+
+def _display_info_type_enum_for_source(
+    source: SourceCodes | None,
+) -> (
+    type[FmDisplayInfoType]
+    | type[DabDisplayInfoType]
+    | type[NetworkDisplayInfoType]
+    | None
+):
+    if source is SourceCodes.FM:
+        return FmDisplayInfoType
+    if source is SourceCodes.DAB:
+        return DabDisplayInfoType
+    if source in (SourceCodes.NET, SourceCodes.USB, SourceCodes.NET_USB):
+        return NetworkDisplayInfoType
+    return None
+
+
+def display_info_types_for_source(
+    source: SourceCodes | None,
+) -> tuple[DisplayInfoTypeValue, ...]:
+    enum_type = _display_info_type_enum_for_source(source)
+    if enum_type is None:
+        return (DisplayInfoType.PROCESSING,)
+    return (DisplayInfoType.PROCESSING, *enum_type)
+
+
+def display_info_type_from_bytes(
+    data: bytes, source: SourceCodes | None
+) -> DisplayInfoTypeValue | None:
+    if len(data) != 1:
+        return None
+    value = data[0]
+    if value in (DisplayInfoType.PROCESSING, DisplayInfoType.CYCLE):
+        return DisplayInfoType.from_int(value)
+    enum_type = _display_info_type_enum_for_source(source)
+    if enum_type is None:
+        return DisplayInfoType.from_int(value)
+    return enum_type.from_int(value)
+
+
+class DisplayInfoTypeCodec(Codec[DisplayInfoTypeValue]):
+    def decode(self, data: bytes) -> DisplayInfoTypeValue | None:
+        return display_info_type_from_bytes(data, None)
+
+    def decode_for_context(
+        self, data: bytes, model: str | None, source: SourceCodes | None
+    ) -> DisplayInfoTypeValue | None:
+        return display_info_type_from_bytes(data, source)
+
+    def encode(self, value: DisplayInfoTypeValue) -> bytes:
+        return bytes([int(value)])
 
 # --- CC 0x0A: VIDEO_SELECTION ---
 
@@ -191,6 +441,21 @@ class MenuCodes(IntOrTypeEnum):
     TUNER = 0x08
     NETWORK = 0x09
     USB = 0x0A
+
+# --- CC 0x15: TUNER_PRESET ---
+
+class TunerPresetCodec(Codec[int]):
+    """1 byte ↔ preset number; 0xff (no preset selected) decodes to None."""
+
+    def decode(self, data: bytes) -> int | None:
+        if len(data) != 1:
+            return None
+        if data == b"\xff":
+            return None
+        return data[0]
+
+    def encode(self, value: int) -> bytes:
+        return bytes([value])
 
 # --- CC 0x1B: PRESET_DETAIL ---
 
@@ -408,6 +673,17 @@ SOURCE_CODES: dict[tuple[ApiModel, int], dict[SourceCodes, bytes]] = {
     (ApiModel.APIST_SERIES, 1): ST_SOURCE_MAPPING,
 }
 
+# --- CC 0x34: ROOM_EQ_NAMES ---
+
+class RoomEqNamesCodec(Codec[list[str]]):
+    """Concatenated 20-byte ASCII records → list of names (read-only)."""
+
+    def decode(self, data: bytes) -> list[str]:
+        return [
+            data[i:i + 20].decode("ascii", errors="replace").rstrip("\x00").strip()
+            for i in range(0, len(data), 20)
+        ]
+
 # --- CC 0x37: ROOM_EQUALIZATION ---
 
 class RoomEqMode(IntOrTypeEnum):
@@ -440,6 +716,38 @@ class DolbyAudioMode(IntOrTypeEnum):
     MOVIE = 0x01  # "On" on 860 series
     MUSIC = 0x02, APIVERSION_HDA_SERIES
     NIGHT = 0x03, APIVERSION_HDA_SERIES
+
+class DolbyLeveler(IntOrTypeEnum):
+    LEVEL_0 = 0x00
+    LEVEL_1 = 0x01
+    LEVEL_2 = 0x02
+    LEVEL_3 = 0x03
+    LEVEL_4 = 0x04
+    LEVEL_5 = 0x05
+    LEVEL_6 = 0x06
+    LEVEL_7 = 0x07
+    LEVEL_8 = 0x08
+    LEVEL_9 = 0x09
+    LEVEL_10 = 0x0A
+    OFF = 0xFF
+
+
+_DOLBY_LEVELER_VALUES = frozenset(DolbyLeveler)
+
+
+class DolbyLevelerCodec(Codec[DolbyLeveler]):
+    def decode(self, data: bytes) -> DolbyLeveler | None:
+        if len(data) != 1:
+            return None
+        value = data[0]
+        if value not in _DOLBY_LEVELER_VALUES:
+            return None
+        return DolbyLeveler(value)
+
+    def encode(self, value: DolbyLeveler) -> bytes:
+        if value not in _DOLBY_LEVELER_VALUES:
+            raise ValueError(f"Invalid Dolby leveler value: {value}")
+        return bytes([value])
 
 # --- CC 0x41: COMPRESSION ---
 
@@ -651,6 +959,60 @@ SAMPLE_RATE_MAP: dict[int, int | None] = {
     0x08: None,  # Undetected
 }
 
+class SampleRateCodec(Codec[int]):
+    """1 byte → sample rate in Hz via SAMPLE_RATE_MAP (read-only)."""
+
+    def decode(self, data: bytes) -> int | None:
+        if len(data) != 1:
+            return None
+        return SAMPLE_RATE_MAP.get(data[0], 0)
+
+# --- CC 0x49: VIDEO_FILM_MODE ---
+
+class VideoFilmMode(IntOrTypeEnum):
+    """Video film-mode detection setting.
+
+    Used by VIDEO_FILM_MODE (0x49).
+
+    See: SH256E "Set/Request Film Mode (0x49)".
+    """
+
+    AUTO = 0x00
+    OFF = 0x01
+
+# --- CC 0x4C/0x4D: VIDEO_NOISE_REDUCTION / VIDEO_MPEG_NOISE_REDUCTION ---
+
+class VideoNoiseReduction(IntOrTypeEnum):
+    """Video noise reduction level.
+
+    Shared by VIDEO_NOISE_REDUCTION (0x4C) and VIDEO_MPEG_NOISE_REDUCTION (0x4D).
+
+    See: SH256E "Set/Request Noise Reduction (0x4C)",
+         "Set/Request MPEG Noise Reduction (0x4D)".
+    """
+
+    OFF = 0x00
+    LOW = 0x01
+    MEDIUM = 0x02
+    HIGH = 0x03
+
+# --- CC 0x4E: ZONE_1_OSD_ON_OFF ---
+
+class ZoneOsd(IntOrTypeEnum):
+    """Zone 1 on-screen display state.
+
+    Used by ZONE_1_OSD_ON_OFF (0x4E). Response uses 0x00/0x01; Set uses
+    0xF1/0xF2 (via set_map on the ByteEnum schema).
+
+    See: SH256E "Set/Request Zone 1 OSD on/off (0x4E)".
+    """
+
+    ON = 0x00
+    OFF = 0x01
+
+#: Asymmetric set codes for ZONE_1_OSD_ON_OFF — the set form uses 0xF1/0xF2.
+ZONE_OSD_SET_MAP = {ZoneOsd.ON: 0xF1, ZoneOsd.OFF: 0xF2}
+
 # --- CC 0x4F: VIDEO_OUTPUT_SWITCHING ---
 
 class HdmiOutput(IntOrTypeEnum):
@@ -666,6 +1028,118 @@ class HdmiOutput(IntOrTypeEnum):
     OUT_1_2 = 0x04
 
 # --- CC 0x50: BLUETOOTH_STATUS ---
+
+
+class TemperatureSensor(IntOrTypeEnum):
+    SENSOR_1 = 0xF0
+    SENSOR_2 = 0xF1
+
+
+_TEMPERATURE_SENSOR_IDS = frozenset(TemperatureSensor)
+
+
+class TemperatureCodec(Codec[int]):
+    def decode(self, data: bytes) -> int | None:
+        if len(data) == 1:
+            return data[0]
+        if len(data) == 2 and data[0] in _TEMPERATURE_SENSOR_IDS:
+            return data[1]
+        return None
+
+
+# --- CC 0x58: AUTO_SHUTDOWN_CONTROL ---
+
+class AutoShutdown(IntOrTypeEnum):
+    """Auto-shutdown timer setting.
+
+    Used by AUTO_SHUTDOWN_CONTROL (0x58).
+
+    See: SH277E "Auto shutdown control (0x58)".
+    """
+
+    DISABLED = 0
+    MINUTES_20 = 20
+    MINUTES_30 = 30
+    HOUR_1 = 60
+    HOURS_2 = 120
+    HOURS_4 = 240
+
+    @classmethod
+    def values_for_model(cls, model: str | None) -> tuple[AutoShutdown, ...]:
+        if model in {"SA10", "SA20"}:
+            return (
+                cls.DISABLED,
+                cls.MINUTES_30,
+                cls.HOUR_1,
+                cls.HOURS_2,
+                cls.HOURS_4,
+            )
+        return (
+            cls.DISABLED,
+            cls.MINUTES_20,
+            cls.MINUTES_30,
+            cls.HOUR_1,
+            cls.HOURS_2,
+            cls.HOURS_4,
+        )
+
+    @classmethod
+    def from_bytes_for_model(
+        cls, data: bytes, model: str | None
+    ) -> AutoShutdown | None:
+        value = int.from_bytes(data, "big")
+        values = cls.values_for_model(model)
+        if value >= len(values):
+            return None
+        return values[value]
+
+    def to_bytes_for_model(self, model: str | None) -> bytes:
+        try:
+            return bytes([self.values_for_model(model).index(self)])
+        except ValueError as exception:
+            raise ValueError(f"{self.name} is not supported on {model}") from exception
+
+# --- CC 0x5B: PROCESSOR_MODE_INPUT ---
+
+class SaProcessorModeCodec(Codec["SourceCodes | None"]):
+    """1 byte ↔ SourceCodes | None; 0x00 → None (disabled), other bytes via the
+    SA-series source encoding (zone 1).
+
+    See: SH306E / SH320E "Processor mode input (0x5B)".
+    """
+
+    def decode(self, data: bytes) -> SourceCodes | None:
+        if len(data) != 1 or data[0] == 0x00:
+            return None
+        try:
+            return SourceCodes.from_bytes(data, ApiModel.APISA_SERIES, 1)
+        except ValueError:
+            return None
+
+    def encode(self, value: SourceCodes | None) -> bytes:
+        if value is None:
+            return bytes([0x00])
+        return value.to_bytes(ApiModel.APISA_SERIES, 1)
+
+# --- CC 0x61: DAC_FILTER ---
+
+class DacFilter(IntOrTypeEnum):
+    """DAC digital filter type.
+
+    Used by DAC_FILTER (0x61). SA20 supports all seven; SA10 supports
+    only the first three.
+
+    See: SH277E "DAC Filter (0x61)".
+    """
+
+    LINEAR_FAST = 0x00
+    LINEAR_SLOW = 0x01
+    MINIMUM_FAST = 0x02
+    MINIMUM_SLOW = 0x03, APIVERSION_EXTENDED_DAC_FILTER_SERIES
+    BRICK_WALL = 0x04, APIVERSION_EXTENDED_DAC_FILTER_SERIES
+    CORRECTED_FAST = 0x05, APIVERSION_EXTENDED_DAC_FILTER_SERIES
+    APODIZING = 0x06, APIVERSION_EXTENDED_DAC_FILTER_SERIES
+
 
 class BluetoothAudioStatus(IntOrTypeEnum):
     """Bluetooth connection and codec status.
