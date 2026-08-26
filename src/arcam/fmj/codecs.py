@@ -69,6 +69,80 @@ class SaveRestoreSubCommand(enum.IntEnum):
 #: (0x06). See: SH289E "Save/Restore secure copy of settings (0x06)".
 SAVE_RESTORE_CONFIRMATION = bytes([0x55, 0x55])
 
+
+class DisplayInfoType(IntOrTypeEnum):
+    PROCESSING = 0x00
+    CYCLE = 0xE0
+
+
+class FmDisplayInfoType(IntOrTypeEnum):
+    RADIO_TEXT = 0x01
+    PROGRAMME_TYPE = 0x02
+    SIGNAL_STRENGTH = 0x03
+
+
+class DabDisplayInfoType(IntOrTypeEnum):
+    RADIO_TEXT = 0x01
+    GENRE = 0x02
+    SIGNAL_QUALITY = 0x03
+    BIT_RATE = 0x04
+
+
+class NetworkDisplayInfoType(IntOrTypeEnum):
+    TRACK = 0x01
+    ARTIST = 0x02
+    ALBUM = 0x03
+    AUDIO_TYPE = 0x04
+    SAMPLE_RATE = 0x05
+
+
+DisplayInfoTypeValue = (
+    DisplayInfoType
+    | FmDisplayInfoType
+    | DabDisplayInfoType
+    | NetworkDisplayInfoType
+)
+
+
+def _display_info_type_enum_for_source(
+    source: SourceCodes | None,
+) -> (
+    type[FmDisplayInfoType]
+    | type[DabDisplayInfoType]
+    | type[NetworkDisplayInfoType]
+    | None
+):
+    if source is SourceCodes.FM:
+        return FmDisplayInfoType
+    if source is SourceCodes.DAB:
+        return DabDisplayInfoType
+    if source in (SourceCodes.NET, SourceCodes.USB, SourceCodes.NET_USB):
+        return NetworkDisplayInfoType
+    return None
+
+
+def display_info_types_for_source(
+    source: SourceCodes | None,
+) -> tuple[DisplayInfoTypeValue, ...]:
+    enum_type = _display_info_type_enum_for_source(source)
+    if enum_type is None:
+        return (DisplayInfoType.PROCESSING,)
+    return (DisplayInfoType.PROCESSING, *enum_type)
+
+
+def display_info_type_from_bytes(
+    data: bytes, source: SourceCodes | None
+) -> DisplayInfoTypeValue | None:
+    if len(data) != 1:
+        return None
+    value = data[0]
+    if value in (DisplayInfoType.PROCESSING, DisplayInfoType.CYCLE):
+        return DisplayInfoType.from_int(value)
+    enum_type = _display_info_type_enum_for_source(source)
+    if enum_type is None:
+        return DisplayInfoType.from_int(value)
+    return enum_type.from_int(value)
+
 # --- CC 0x0A: VIDEO_SELECTION ---
 
 class VideoSelection(IntOrTypeEnum):

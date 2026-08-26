@@ -13,6 +13,7 @@ from .codecs import (
     DecodeMode2CH,
     DecodeModeMCH,
     DisplayBrightness,
+    DisplayInfoTypeValue,
     DolbyAudioMode,
     HdmiOutput,
     IMAX_ENHANCED_SET_MAP,
@@ -30,6 +31,7 @@ from .codecs import (
     SourceCodes,
     VideoParameters,
     VideoSelection,
+    display_info_type_from_bytes,
 )
 from .commands import (
     CommandCodes,
@@ -441,13 +443,16 @@ class State:
             return None
         return value == 0x01
 
-    def get_display_info_type(self) -> int | None:
-        """Return the current display information type."""
-        return _get_byte(self._state.get(CommandCodes.DISPLAY_INFORMATION_TYPE))
+    def get_display_info_type(self) -> DisplayInfoTypeValue | None:
+        value = self._state.get(CommandCodes.DISPLAY_INFORMATION_TYPE)
+        if value is None:
+            return None
+        return display_info_type_from_bytes(value, self.get_source())
 
-    async def set_display_info_type(self, info_type: int) -> None:
-        """Set the display information type. Use 0xE0 to cycle."""
-        await self._request(self._zn, CommandCodes.DISPLAY_INFORMATION_TYPE, bytes([info_type]))
+    async def set_display_info_type(self, info_type: DisplayInfoTypeValue) -> None:
+        await self._request(
+            self._zn, CommandCodes.DISPLAY_INFORMATION_TYPE, bytes([int(info_type)])
+        )
 
     async def set_display_brightness(self, level: DisplayBrightness) -> None:
         await self._send_rc5(RC5CODE_DISPLAY_BRIGHTNESS, level)

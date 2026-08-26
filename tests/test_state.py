@@ -7,11 +7,15 @@ from arcam.fmj.codecs import (
     AnswerCodes,
     BluetoothAudioStatus,
     CompressionMode,
+    DabDisplayInfoType,
     DisplayBrightness,
+    DisplayInfoType,
     DolbyAudioMode,
+    FmDisplayInfoType,
     HdmiOutput,
     ImaxEnhancedMode,
     IncomingAudioFormat,
+    NetworkDisplayInfoType,
     NetworkPlaybackStatus,
     NowPlayingEncoder,
     NowPlayingInfo,
@@ -20,6 +24,7 @@ from arcam.fmj.codecs import (
     SaveRestoreSubCommand,
     SourceCodes,
     VideoSelection,
+    display_info_types_for_source,
 )
 from arcam.fmj.commands import CommandCodes, CommandFlags, POWER_WRITE_SUPPORTED
 from arcam.fmj.errors import UnsupportedCommand
@@ -393,27 +398,71 @@ def test_get_display_info_type_none():
     assert state.get_display_info_type() is None
 
 
-def test_get_display_info_type():
+@pytest.mark.parametrize("source, byte_val, expected", [
+    (SourceCodes.BD, 0x00, DisplayInfoType.PROCESSING),
+    (SourceCodes.FM, 0x01, FmDisplayInfoType.RADIO_TEXT),
+    (SourceCodes.FM, 0x02, FmDisplayInfoType.PROGRAMME_TYPE),
+    (SourceCodes.FM, 0x03, FmDisplayInfoType.SIGNAL_STRENGTH),
+    (SourceCodes.DAB, 0x01, DabDisplayInfoType.RADIO_TEXT),
+    (SourceCodes.DAB, 0x02, DabDisplayInfoType.GENRE),
+    (SourceCodes.DAB, 0x03, DabDisplayInfoType.SIGNAL_QUALITY),
+    (SourceCodes.DAB, 0x04, DabDisplayInfoType.BIT_RATE),
+    (SourceCodes.NET, 0x01, NetworkDisplayInfoType.TRACK),
+    (SourceCodes.NET, 0x02, NetworkDisplayInfoType.ARTIST),
+    (SourceCodes.NET, 0x03, NetworkDisplayInfoType.ALBUM),
+    (SourceCodes.NET, 0x04, NetworkDisplayInfoType.AUDIO_TYPE),
+    (SourceCodes.NET, 0x05, NetworkDisplayInfoType.SAMPLE_RATE),
+    (SourceCodes.USB, 0x01, NetworkDisplayInfoType.TRACK),
+    (SourceCodes.NET_USB, 0x05, NetworkDisplayInfoType.SAMPLE_RATE),
+])
+def test_get_display_info_type(source, byte_val, expected):
     client = MagicMock(spec=Client)
     state = State(client, 1)
-    state._state[CommandCodes.DISPLAY_INFORMATION_TYPE] = bytes([0x02])
-    assert state.get_display_info_type() == 2
+    state.get_source = MagicMock(return_value=source)
+    state._state[CommandCodes.DISPLAY_INFORMATION_TYPE] = bytes([byte_val])
+    assert state.get_display_info_type() is expected
 
 
-async def test_set_display_info_type():
+@pytest.mark.parametrize("info_type, byte_val", [
+    (DisplayInfoType.PROCESSING, 0x00),
+    (FmDisplayInfoType.SIGNAL_STRENGTH, 0x03),
+    (DabDisplayInfoType.BIT_RATE, 0x04),
+    (NetworkDisplayInfoType.SAMPLE_RATE, 0x05),
+    (DisplayInfoType.CYCLE, 0xE0),
+])
+async def test_set_display_info_type(info_type, byte_val):
     client = MagicMock(spec=Client)
     state = State(client, 1)
-    await state.set_display_info_type(0x03)
+    await state.set_display_info_type(info_type)
     client.request.assert_called_with(
-        1, CommandCodes.DISPLAY_INFORMATION_TYPE, bytes([0x03]), 0)
+        1, CommandCodes.DISPLAY_INFORMATION_TYPE, bytes([byte_val]), 0)
 
 
-async def test_set_display_info_type_cycle():
-    client = MagicMock(spec=Client)
-    state = State(client, 1)
-    await state.set_display_info_type(0xE0)
-    client.request.assert_called_with(
-        1, CommandCodes.DISPLAY_INFORMATION_TYPE, bytes([0xE0]), 0)
+@pytest.mark.parametrize("source, expected", [
+    (SourceCodes.BD, (DisplayInfoType.PROCESSING,)),
+    (
+        SourceCodes.FM,
+        (DisplayInfoType.PROCESSING, *FmDisplayInfoType),
+    ),
+    (
+        SourceCodes.DAB,
+        (DisplayInfoType.PROCESSING, *DabDisplayInfoType),
+    ),
+    (
+        SourceCodes.NET,
+        (DisplayInfoType.PROCESSING, *NetworkDisplayInfoType),
+    ),
+    (
+        SourceCodes.USB,
+        (DisplayInfoType.PROCESSING, *NetworkDisplayInfoType),
+    ),
+    (
+        SourceCodes.NET_USB,
+        (DisplayInfoType.PROCESSING, *NetworkDisplayInfoType),
+    ),
+])
+def test_display_info_types_for_source(source, expected):
+    assert display_info_types_for_source(source) == expected
 
 
 # --- Lipsync Delay (0x40) ---
